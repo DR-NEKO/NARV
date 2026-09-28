@@ -9,7 +9,7 @@ const route=()=>new URL(location.hash.slice(1)||"/","https://narv.local");
 async function request(path,body,{anonymous=false}={}){
  const token=anonymous?null:sessionStorage.getItem(sessionKey);
  const res=await fetch(base+path,{method:body===undefined?"GET":"POST",headers:{...(token?{Authorization:"Bearer "+token}:{}),...(body===undefined?{}:{"Content-Type":"application/json"})},...(body===undefined?{}:{body:JSON.stringify(body)}),cache:anonymous?"default":"no-store"});
- const data=await res.json();if(!res.ok){if(res.status===401){sessionStorage.removeItem(sessionKey);clearPrivate()}const e=Error(data.error||"服务暂时无法连接。");e.status=res.status;throw e}return data;
+ const data=await res.json();if(!anonymous&&token!==sessionStorage.getItem(sessionKey)){const e=Error("登录状态已变化，请重新打开当前页面。");e.status=499;throw e}if(!res.ok){if(res.status===401){sessionStorage.removeItem(sessionKey);clearPrivate()}const e=Error(data.error||"服务暂时无法连接。");e.status=res.status;throw e}return data;
 }
 function mergeArticles(articles){const all=new Map(cache.articles.map(a=>[a.id,a]));for(const a of articles){const old=all.get(a.id);all.set(a.id,{...old,...a,...(!a.content&&old?.content?{content:old.content}:{}),...(!Object.keys(a.images||{}).length&&old?.images?{images:old.images}:{})})}cache.articles=[...all.values()]}
 async function publicLoad(){
@@ -40,7 +40,7 @@ async function article(id,{force=false}={}){
  if(force||!doc||cache.user){try{doc=await request("/api/public/articles/"+encodeURIComponent(id),undefined,{anonymous:true})}catch(error){if(!doc||error.status===404)throw error}}
  doc.article.avatar=staticMedia(doc.article.avatar);for(const key of Object.keys(doc.article.images||{}))doc.article.images[key]=staticMedia(doc.article.images[key]);for(const c of doc.comments)c.avatar=staticMedia(c.avatar);
  mergeArticles([doc.article]);cache.comments=[...cache.comments.filter(c=>c.articleId!==id),...doc.comments];cache.voteTotals[id]={...doc.votes,mine:0};
- if(cache.user){const state=await request("/api/article-state/"+encodeURIComponent(id));mergePrivate(state)}
+ if(cache.user&&route().pathname==="/article/"+id){const state=await request("/api/article-state/"+encodeURIComponent(id));if(route().pathname==="/article/"+id)mergePrivate(state)}
  routes.set(key,{time:Date.now()});
 }
 export async function ensureSearch(){
@@ -50,16 +50,16 @@ export async function ensureSearch(){
  else for(const a of [...cache.articles])await article(a.id);searchLoaded=true;document.dispatchEvent(new Event("narv:public-ready"))})();
  inflight.set("search",work);try{await work}finally{inflight.delete("search")}
 }
-export const routeLoading=()=>remote&&pending;
+export const routeLoading=()=>remote&&inflight.has(route().pathname+route().search);
 export async function refresh({force=false}={}){
  if(!remote)return;
  const current=route(),key=current.pathname+current.search;
  if(readyRoute===key&&!force)return;
- if(inflight.has(key))return inflight.get(key);
+ if(inflight.has(key)){const previous=inflight.get(key);if(!force)return previous;try{await previous}catch{}return refresh({force:true})}
  const work=(async()=>{await publicLoad();await profile();const [name,id]=current.pathname.slice(1).split("/");
  if(name==="workspace"||name==="messages"||name==="announcements"){
  if(cache.user){const cached=routes.get(key);const tab=name==="messages"?"messages":name==="announcements"?"announcements":id||"";let data=cached?.data;
- if(force||!data||Date.now()-cached.time>30000){data=await request("/api/workspace?tab="+encodeURIComponent(tab)+"&page="+(current.searchParams.get("page")||1));routes.set(key,{time:Date.now(),data})}mergePrivate(data)}
+ if(force||!data||Date.now()-cached.time>30000){data=await request("/api/workspace?tab="+encodeURIComponent(tab)+"&page="+(current.searchParams.get("page")||1));routes.set(key,{time:Date.now(),data})}if(route().pathname+route().search===key)mergePrivate(data)}
  }else if(["submission","edit"].includes(name)&&cache.user){let data=details.get(id);if(force||!data||Date.now()-data.time>30000){data={...await request("/api/submissions/"+encodeURIComponent(id)),time:Date.now()};details.set(id,data)}cache.submissions=[...cache.submissions.filter(s=>s.id!==id),data.submission];cache.recordVersions["submissions/"+id]=data.recordVersion;Object.assign(cache.metrics,data.metrics)}
  else if(name==="report"&&cache.user){const data=await request("/api/reports/"+encodeURIComponent(id));cache.reports=[...cache.reports.filter(r=>r.id!==id),data.report];cache.recordVersions["reports/"+id]=data.recordVersion}
  else if(name==="article")await article(id,{force});else if(name==="search")await ensureSearch();
