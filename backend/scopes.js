@@ -7,20 +7,22 @@ export async function actorScope(db,userId){
  const actual=await hydrate(db,user);Object.assign(user,actual);before.dependencies.push("users/"+userId);return before;
 }
 export async function workspaceScope(db,userId,{tab="",page=1}={}){
- const before=await actorScope(db,userId),u=before.state.users[0],offset=(Math.max(1,page)-1)*50,add=async(where,args,limit=50)=>appendHeads(before,await select(db,where,args,{limit,offset}));
- appendHeads(before,await select(db,"kind='submissions' AND owner_id=?",[userId],{limit:200}));
- appendHeads(before,await select(db,"kind='submissions' AND reviewer_id=?",[userId],{limit:200}));
- await add("kind='notifications' AND owner_id=?",[userId],50);
- await add("kind='announcements'",[],100);
- if(tab==="reviews"&&rank(u)>=1&&u.role!=="original_editor"){
-  await add("kind='submissions' AND ((status='submitted' AND required_rank<=? AND owner_id!=?) OR reviewer_id=?)",[rank(u),userId,userId],50);
- }else if(tab==="comments"&&rank(u)>=1)await add("kind='comments' AND status='pending'",[],50);
- else if(tab==="my-comments"){const rows=await select(db,"kind='comments' AND owner_id=?",[userId],{limit:50,offset});const part=await loadKeys(db,rows.map(r=>r.key));before.state.comments.push(...part.state.comments);Object.assign(before.versions,part.versions)}
- else if(tab==="bookmarks")await add("kind='bookmarks' AND owner_id=?",[userId],50);
- else if(tab==="reports"){await add("kind='reports' AND (owner_id=? OR required_rank<=? OR reviewer_id=? OR json_extract(head,'$.authorId')=? OR json_extract(head,'$.originalReviewerId')=?)",[userId,rank(u),userId,userId,userId],50);if(u.role==="original_editor")await add("kind='submissions' AND status='arbitration'",[],50)}
- else if(tab==="scores")await add("kind='scoreEvents' AND owner_id=?",[userId],50);
- else if(tab==="applications"){await add("kind='applications' AND (owner_id=? OR ? >=3)",[userId,rank(u)],50);await add("kind='users' AND key IN (SELECT 'users/'||owner_id FROM entities WHERE kind='applications' AND status='pending')",[],50)}
- else if(tab==="members"&&rank(u)>=3){await add("kind='users'",[],50);await add("kind='accountEvents'",[],50);if(rank(u)>=4)await add("kind='identityAudits'",[],50)}
+ const before=await actorScope(db,userId),u=before.state.users[0],offset=(Math.max(1,page)-1)*50,plans=[];
+ const add=(where,args=[],limit=50,at=offset)=>plans.push(db.prepare("SELECT key,version,head FROM entities WHERE "+where+" ORDER BY updated_at DESC,key LIMIT ? OFFSET ?").bind(...args,limit,at));
+ if(["","posts","reviews","applications","members"].includes(tab))add("kind='submissions' AND owner_id=?",[userId],200,0);
+ if(["reviews","applications","members"].includes(tab))add("kind='submissions' AND reviewer_id=?",[userId],200,0);
+ if(tab==="messages")add("kind='notifications' AND owner_id=?",[userId]);
+ if(tab==="announcements")add("kind='announcements'",[],100);
+ if(tab==="reviews"&&rank(u)>=1&&u.role!=="original_editor")add("kind='submissions' AND status='submitted' AND required_rank<=? AND owner_id!=?",[rank(u),userId]);
+ else if(tab==="comments"&&rank(u)>=1)add("kind='comments' AND status='pending'");
+ else if(tab==="my-comments")add("kind='comments' AND owner_id=?",[userId]);
+ else if(tab==="bookmarks")add("kind='bookmarks' AND owner_id=?",[userId]);
+ else if(tab==="reports"){add("kind='reports' AND (owner_id=? OR required_rank<=? OR reviewer_id=? OR json_extract(head,'$.authorId')=? OR json_extract(head,'$.originalReviewerId')=?)",[userId,rank(u),userId,userId,userId]);if(u.role==="original_editor")add("kind='submissions' AND status='arbitration'")}
+ else if(tab==="scores")add("kind='scoreEvents' AND owner_id=?",[userId]);
+ else if(tab==="applications"){add("kind='applications' AND (owner_id=? OR ? >=3)",[userId,rank(u)]);add("kind='users' AND key IN (SELECT 'users/'||owner_id FROM entities WHERE kind='applications' AND status='pending')")}
+ else if(tab==="members"&&rank(u)>=3){add("kind='users'");add("kind='accountEvents'");if(rank(u)>=4)add("kind='identityAudits'")}
+ if(plans.length){const results=await db.batch(plans);for(const r of results)appendHeads(before,r.results)}
+ if(tab==="my-comments"){const keys=before.state.comments.map(c=>"comments/"+c.id),part=await loadKeys(db,keys);before.state.comments=part.state.comments;Object.assign(before.versions,part.versions)}
  return before;
 }
 export async function submissionScope(db,userId,id){
@@ -33,6 +35,7 @@ export async function submissionScope(db,userId,id){
 export async function commandScope(db,userId,name,args){
  const before=await actorScope(db,userId),fullKeys=new Set(),thin=[];
  const add=async(where,params,limit=50)=>{const rows=await select(db,where,params,{limit});thin.push(...rows);return rows};
+ if(name==="deleteDraft")fullKeys.add("submissions/"+args[0]);
  if(name==="action"){fullKeys.add("submissions/"+args[0]);if(args[1]==="review")fullKeys.add("scoreEvents/review:"+args[0]+":"+userId);if(["publish","schedule"].includes(args[1]))fullKeys.add("scoreEvents/publication:"+args[0]+":base")}
  if(name==="report")fullKeys.add("submissions/"+args[0]);
  if(["claimAccountability","resolveAccountability"].includes(name))fullKeys.add("reports/"+args[0]);

@@ -42,3 +42,5 @@ export const report=(...args)=>local().report(...args);
 export const claimAccountability=(...args)=>local().claimAccountability(...args);
 export const resolveAccountability=(...args)=>local().resolveAccountability(...args);
 export const scores=(...args)=>local().scores(...args);
+
+export const deleteDraft=(...args)=>local().deleteDraft(...args);

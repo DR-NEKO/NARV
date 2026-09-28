@@ -7,5 +7,5 @@ export async function articleState(env,userId,id){
  appendHeads(before,await select(env.DB,"kind='comments' AND article_id=? AND (owner_id=? OR (status='pending' AND ?>=1))",[id,userId,rank(u)],{limit:100}));
  const comments=before.state.comments.map(c=>c.authorId===userId?{...c,avatar:u.community.avatar}:{...c,authorId:"comment-author:"+c.id,avatar:"◈",history:undefined,versions:undefined,reviewedBy:undefined});
  const counts=await env.DB.prepare("SELECT up,down FROM vote_totals WHERE article_id=?").bind(id).first()||{up:0,down:0};
- return {comments,myComments:comments.filter(c=>c.authorId===userId),bookmarks:before.state.bookmarks,voteTotals:{[id]:{...counts,mine:before.state.votes.find(v=>v.articleId===id)?.value||0}},recordVersions:before.versions};
+ return {revision:before.revision,comments,myComments:comments.filter(c=>c.authorId===userId),bookmarks:before.state.bookmarks,voteTotals:{[id]:{...counts,mine:before.state.votes.find(v=>v.articleId===id)?.value||0}},recordVersions:before.versions};
 }

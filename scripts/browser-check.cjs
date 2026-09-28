@@ -3,9 +3,9 @@ const{chromium}=require(process.env.NARV_PLAYWRIGHT||"C:/Users/007/.cache/codex-
 const shot=async name=>{await page.evaluate(()=>document.fonts.ready);await page.screenshot({path:path.join(dir,name+".png"),fullPage:true})};
 const go=async route=>{await page.goto(root+"/#/"+route);await page.locator("main h1").first().waitFor()};
 const role=async id=>{await page.locator("[data-action=switch-role]").click();await page.locator('[data-account="'+id+'"]').click();await page.locator(".workspace-tabs").waitFor()};
-await page.goto(root);await page.getByRole("heading",{name:"值得留下的经验，认真写下来。"}).waitFor();await shot("home-desktop");
+await page.goto(root);await page.getByRole("heading",{name:"文章"}).waitFor();await shot("home-desktop");
 assert((await page.locator(".featured h2").evaluate(e=>getComputedStyle(e).fontFamily)).includes("Noto Serif"));
-await go("search?q="+encodeURIComponent("交查验证"));await page.locator(".search-result").first().waitFor();assert((await page.locator(".search-result").first().innerText()).includes("回应"));await shot("search-desktop");
+await go("search?q="+encodeURIComponent("交查验证"));await page.locator(".search-result").first().waitFor();assert((await page.locator(".search-result").first().innerText()).includes("评论"));await shot("search-desktop");
 await page.locator(".search-result h2 a").first().click();await page.locator(".reply.targeted").waitFor();
 await page.getByRole("link",{name:"投稿",exact:true}).click();await page.locator('[data-account="demo-author"]').click();await page.locator("#compose").waitFor();
 await go("workspace/profile");await page.locator('[name="communityName"]').fill("林间");await page.locator('[name="reviewName"]').fill("孤舟");await page.getByRole("button",{name:"保存两套身份"}).click();await shot("identities-desktop");
@@ -29,7 +29,7 @@ await role("demo-author");await go("submission/"+id);await page.locator('[name="
 await page.locator("[data-bookmark]").click();assert.equal(await page.locator("[data-bookmark]").getAttribute("aria-pressed"),"true");await page.locator('[data-vote="1"]').click();await page.locator('[data-vote="-1"]').click();assert.equal(await page.locator('[data-vote="1"]').getAttribute("aria-pressed"),"false");assert.equal(await page.locator('[data-vote="-1"]').getAttribute("aria-pressed"),"true");
 const comment="补充一个与文章有关的具体经验：当我们做交叉验证时，需要先检查数据划分是否包含同一对象的重复记录，否则可能产生数据泄漏。我建议把随机种子、依赖版本、数据来源和异常情况一并写入实验日志。这个建议只针对有重复观测的小型实验，其他任务仍需根据实际条件判断。";
 await page.locator('#comment-form [name="content"]').fill(comment);await page.locator('[name="commentConsent"]').check();await page.getByRole("button",{name:"提交中长评论，等待审核"}).click();await page.locator(".reply .label").filter({hasText:"待审核"}).waitFor();await shot("article-desktop");
-await role("demo-temp");await go("workspace/comments");await page.getByRole("button",{name:"通过并公开"}).click();await go("search?q="+encodeURIComponent("异常情况"));await page.locator(".search-result").first().waitFor();assert((await page.locator(".search-result").first().innerText()).includes("回应"));
+await role("demo-temp");await go("workspace/comments");await page.getByRole("button",{name:"通过并公开"}).click();await go("search?q="+encodeURIComponent("异常情况"));await page.locator(".search-result").first().waitFor();assert((await page.locator(".search-result").first().innerText()).includes("评论"));
 await role("demo-author");await go("workspace/applications");await page.locator('[name="statement"]').fill("我希望参与学习与研究经验文章的审稿，认真核实事实、关注适用范围，并提供具体而可执行的修改建议。");await page.locator('[name="background"]').fill("我有课程项目和实验复盘的经验，能提供公开写作材料，愿意遵守保密要求，遇到熟人或利益关系时主动回避。");await page.locator('[name="integrity"]').check();await page.getByRole("button",{name:"提交申请",exact:true}).click();
 for(const editor of["demo-editor","demo-editor-2","demo-editor-3"]){await role(editor);await go("workspace/applications");await page.locator('.endorse-form [name="note"]').fill("申请材料与代表性经历足够具体，认可其参与临时审稿。");await page.getByRole("button",{name:"提交认可意见"}).click();}
 await role("demo-author");await go("workspace/applications");assert((await page.locator(".page-heading").innerText()).includes("临时 Reviewer"));

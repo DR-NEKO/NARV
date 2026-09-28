@@ -34,7 +34,7 @@ OAuth 回调 URL 是 API /auth/callback。IDENTITY_PEPPER 用来 HMAC GitHub 登
 
 - 独立记录索引、按用户／页面／稿件读取；版本和图片按需获取。
 - 文本 gzip，图片 SHA-256 去重。未引用私有 blob 超过一天后清理；公开引用保留。
-- 每账号最多 200 篇保留稿件；每请求 1.6 MB；每次事务最多 48 条语句。
+- 每账号最多 200 篇保留稿件；每篇最多 10 图、新图自动压缩、总图片数据 1.2 MB；每请求 1.6 MB；每次事务最多 48 条语句。
 - 不再有 100 账号／8 MB 的旧试运行门槛。压缩记录＋blob 业务容量主动限制 300 MiB，留出索引、公共投影、会话和数据库开销；不等于 D1 文件尺寸的精确上限。
 - 记录级乐观锁＋事务／唯一约束；不同用户独立写互不因全站版本号冲突，同稿过期操作返回 409。
 - 账号写接口每分钟 30 次；OAuth／匿名写入口每 IP 每分钟 300 次；公共缓存未命中读取有 isolate 内的宽松限流（校园 NAT 下每 IP 6000/min）。它不是分布式 WAF，不能保证挡住换 IP 抓取。
@@ -69,3 +69,5 @@ HTTPS_PROXY=http://127.0.0.1:7980 NARV_API_URL=https://narv-api.dr-neko-narv.wor
 ~~~
 
 4173 是本地演示，4174 是 Worker 逻辑＋SQLite 联调。浏览器验收使用独立 4175 和临时数据库／测试会话；不替换生产数据。Windows SQLite 数据放系统 temp，避免 UNC 文件锁。实际 workerd + D1 本地迁移／权限／cron 另有 runtime check。k6 本机负载脚本禁止指向公开云端，避免消耗生产免费额度。
+
+正式构建使用固定版本 esbuild 和 TanStack Query Core；公开 JS／CSS 文件名含内容哈希，减少旧文件混用。vendor Query Core 与 LICENSE 已保存，重建可运行 node scripts/vendor-query.mjs。客户端标签页只缓存本人账号／稿件摘要 60 秒，后台重新验会话，退出清理；缓存从不替代服务器权限判断。稿件从未提交（draft／版本0）时作者可删除，已提交稿件只能遵循撤回／撤稿流程。

@@ -24,12 +24,15 @@ export async function select(db,where,args=[],{limit=100,offset=0}={}){
 export async function load(db,options={}){
  const scoped=options.keys!==undefined;
  const params=scoped?[JSON.stringify([...new Set(["meta",...options.keys])])]:[];
- const rows=await db.prepare("SELECT key,part,data FROM records"+(scoped?" WHERE key IN (SELECT value FROM json_each(?))":"")+" ORDER BY key,part").bind(...params).all();
+ const [rows,infos,revisionRow]=await db.batch([
+ db.prepare("SELECT key,part,data FROM records"+(scoped?" WHERE key IN (SELECT value FROM json_each(?))":"")+" ORDER BY key,part").bind(...params),
+ db.prepare("SELECT key,version FROM entities"+(scoped?" WHERE key IN (SELECT value FROM json_each(?))":"")).bind(...params),
+ db.prepare("SELECT value FROM revision WHERE id=1")
+ ]);
  const values=new Map();for(const r of rows.results)values.set(r.key,(values.get(r.key)||"")+r.data);
  const state=engine().state();
  for(const [key,text] of values){const value=JSON.parse(await decompress(text));if(key==="meta")Object.assign(state,value);else state[key.split("/")[0]].push(options.hydrate===false?value:await hydrate(db,value))}
- const infos=scoped?await db.prepare("SELECT key,version FROM entities WHERE key IN (SELECT value FROM json_each(?))").bind(params[0]).all():await db.prepare("SELECT key,version FROM entities").all();
- const revision=(await db.prepare("SELECT value FROM revision WHERE id=1").first()).value;
+ const revision=revisionRow.results[0].value;
  return {state,revision,versions:Object.fromEntries(infos.results.map(r=>[r.key,r.version])),dependencies:[],readOnly:new Set()};
 }
 export async function loadKeys(db,keys,{hydrate:shouldHydrate=false}={}){return load(db,{keys,hydrate:shouldHydrate})}
@@ -63,10 +66,10 @@ export async function save(db,before,after,{forceIndex=false,extra=[],publicize}
  }
 
  if(publicize)statements.push(...await publicize(db,encoded,removed));
- statements.push(...extra,db.prepare("INSERT INTO write_guard(id,ok) SELECT ?,CASE WHEN bytes<=314572800 THEN 1 ELSE 0 END FROM storage_totals WHERE id=1").bind(token+":capacity"),db.prepare("UPDATE revision SET value=value+1 WHERE id=1"),db.prepare("DELETE FROM write_guard WHERE id IN (?,?)").bind(token,token+":capacity"));
+ statements.push(...extra,db.prepare("INSERT INTO write_guard(id,ok) SELECT ?,CASE WHEN bytes<=314572800 THEN 1 ELSE 0 END FROM storage_totals WHERE id=1").bind(token+":capacity"),db.prepare("UPDATE revision SET value=value+1 WHERE id=1 RETURNING value"),db.prepare("DELETE FROM write_guard WHERE id IN (?,?)").bind(token,token+":capacity"));
  if(statements.length>48)throw Error("本次变更较多，请分批处理。");
- try{await db.batch(statements)}catch(error){if(/CHECK|UNIQUE/.test(String(error))){const e=Error("记录已有更新或触及存储限制，请刷新后重试；仍失败时请联系编辑。");e.status=409;throw e}throw error}
- return before.revision+1;
+ let completed;try{completed=await db.batch(statements)}catch(error){if(/CHECK|UNIQUE/.test(String(error))){const e=Error("记录已有更新或触及存储限制，请刷新后重试；仍失败时请联系编辑。");e.status=409;throw e}throw error}
+ return completed[completed.length-2].results[0].value;
 }
 export async function migrateRecords(db,{publicize,transform=v=>v}={}){
  const initial=await load(db,{hydrate:false});

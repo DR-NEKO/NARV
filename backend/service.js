@@ -35,7 +35,7 @@ const commands={
  apply:(d,u,a)=>d.apply(u,a[0]),endorse:(d,u,a)=>d.endorse(u,...a),promote:(d,u,a)=>d.promote(u,...a),
  markRead:(d,u,a)=>d.markRead(u,a[0]),announce:(d,u,a)=>d.announce(u,a[0]),archiveAnnouncement:(d,u,a)=>d.archiveAnnouncement(u,a[0]),
  updateProfiles:(d,u,a)=>d.updateProfiles(u,a[0]),revealIdentity:(d,u,a)=>d.revealIdentity(u,...a),
- toggleBookmark:(d,u,a)=>d.toggleBookmark(u,a[0]),vote:(d,u,a)=>d.vote(u,...a)
+ deleteDraft:(d,u,a)=>d.deleteDraft(u,a[0]),toggleBookmark:(d,u,a)=>d.toggleBookmark(u,a[0]),vote:(d,u,a)=>d.vote(u,...a)
 };
 export async function publicParts(db){
  const rows=await db.prepare("SELECT kind,data FROM public_documents ORDER BY key LIMIT 500").all();
@@ -44,13 +44,19 @@ export async function publicParts(db){
 async function views(env,before,userId,{thin=true}={}){
  const data=snapshot(before.state,userId,before.revision);
  const ids=[...new Set([...before.state.submissions.filter(s=>s.authorId===userId).map(s=>s.id),...before.state.bookmarks.map(b=>b.articleId),...before.state.comments.map(c=>c.articleId)])];
- const rows=await env.DB.prepare("SELECT summary FROM public_documents WHERE kind='articles' AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(ids)).all();
- const pub={articles:rows.results.map(r=>({...JSON.parse(r.summary),content:"",images:{}})),comments:[],announcements:[]};
- data.articles=pub.articles;data.comments=[...pub.comments,...data.comments.filter(c=>c.status!=="published")];data.announcements=[...pub.announcements,...data.announcements.filter(a=>a.audience!=="public")];
-  const score=await env.DB.prepare("SELECT points FROM score_totals WHERE user_id=?").bind(userId).first();data.points=score?.points||0;
- if(rank(data.user)>=3){const totals=await env.DB.prepare("SELECT user_id,points FROM score_totals WHERE user_id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(before.state.users.map(x=>x.id))).all();for(const t of totals.results){data.metrics[t.user_id]||={};data.metrics[t.user_id].points=t.points}}
+ const memberIds=before.state.users.map(x=>x.id);
+ const [rows,scoreRows,memberScores,totals,unread]=await env.DB.batch([
+ env.DB.prepare("SELECT summary FROM public_documents WHERE kind='articles' AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(ids)),
+ env.DB.prepare("SELECT points FROM score_totals WHERE user_id=?").bind(userId),
+ env.DB.prepare("SELECT user_id,points FROM score_totals WHERE user_id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(rank(data.user)>=3?memberIds:[])),
+ env.DB.prepare("SELECT article_id,up,down FROM vote_totals WHERE article_id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(ids)),
+ env.DB.prepare("SELECT count(*) AS n FROM entities WHERE kind='notifications' AND owner_id=? AND json_extract(head,'$.read')=0").bind(userId)
+ ]);
+ data.articles=rows.results.map(r=>({...JSON.parse(r.summary),content:"",images:{}}));
+ data.announcements=data.announcements.filter(a=>a.audience!=="public");
+ data.points=scoreRows.results[0]?.points||0;data.unread=unread.results[0].n;
+ for(const t of memberScores.results){data.metrics[t.user_id]||={};data.metrics[t.user_id].points=t.points}
  data.recordVersions=Object.fromEntries(Object.entries(before.versions).filter(([key])=>!key.startsWith("users/")||key==="users/"+userId));
- const totals=await env.DB.prepare("SELECT article_id,up,down FROM vote_totals WHERE article_id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(pub.articles.map(a=>a.id))).all();
  for(const t of totals.results)data.voteTotals[t.article_id]={up:t.up,down:t.down,mine:before.state.votes.find(v=>v.articleId===t.article_id&&v.userId===userId)?.value||0};
  if(thin)data.submissions=data.submissions.map(s=>({...s,content:"",images:{},workingDraft:undefined,versions:s.versions.map(v=>({version:v.version,title:v.title,date:v.date}))}));
  return data;
@@ -70,7 +76,7 @@ export async function detail(env,userId,id,version){
 export async function command(env,userId,payload){
  if(!Object.hasOwn(commands,payload?.name)||!Array.isArray(payload.args)||payload.args.length>6)throw Error("无效操作。");
  const before=await commandScope(env.DB,userId,payload.name,payload.args),u=before.state.users.find(x=>x.id===userId);
- const primary={claimAccountability:"reports",resolveAccountability:"reports",action:"submissions",moderateComment:"comments",editComment:"comments",withdrawComment:"comments",endorse:"applications",promote:"users",archiveAnnouncement:"announcements",updateProfiles:"users"};
+ const primary={deleteDraft:"submissions",claimAccountability:"reports",resolveAccountability:"reports",action:"submissions",moderateComment:"comments",editComment:"comments",withdrawComment:"comments",endorse:"applications",promote:"users",archiveAnnouncement:"announcements",updateProfiles:"users"};
  const key=primary[payload.name]?primary[payload.name]+"/"+(payload.name==="updateProfiles"?userId:payload.args[0]):null;
  if(key&&payload.recordVersions?.[key]!==undefined&&payload.recordVersions[key]!==before.versions[key]){const e=Error("这条记录已有更新，请刷新后重新操作。");e.status=409;throw e}
  if(payload.name==="create"){const count=await env.DB.prepare("SELECT count(*) AS n FROM entities WHERE kind='submissions' AND owner_id=?").bind(userId).first();if(count.n>=200)throw Error("每个账号最多保留 200 篇稿件；请先整理草稿。")}
@@ -86,7 +92,17 @@ export async function command(env,userId,payload){
  if(article&&article.authorId!==userId)extra.push(env.DB.prepare("INSERT INTO support_totals(article_id,supporters) VALUES(?,?) ON CONFLICT(article_id) DO UPDATE SET supporters=supporters+excluded.supporters").bind(id,Number(current)-Number(old)));
  }
  const revision=await save(env.DB,before,after,{extra,publicize});
- return {result:payload.name==="action"?submissionView(result,u):["report","claimAccountability","resolveAccountability"].includes(payload.name)?reportView(result,u):result??null,revision};
+ const actor=after.users.find(x=>x.id===userId),actorChanged=JSON.stringify(actor)!==JSON.stringify(u),recordVersions={["users/"+userId]:before.versions["users/"+userId]+Number(actorChanged)};
+ if(key&&payload.name!=="updateProfiles"&&after[primary[payload.name]]?.some(x=>x.id===payload.args[0]))recordVersions[key]=(before.versions[key]||0)+1;
+ if(payload.name==="create")recordVersions["submissions/"+result.id]=1;
+ if(payload.name==="addComment")recordVersions["comments/"+result.id]=1;
+ let projected=result??null;
+ if(["create","action"].includes(payload.name)){projected=submissionView(result,u);delete projected.images;if(typeof projected.authorAvatar==="object")delete projected.authorAvatar;projected.versions=projected.versions.map(v=>({version:v.version,title:v.title,date:v.date}));if(projected.workingDraft)delete projected.workingDraft.images}
+ if(["report","claimAccountability","resolveAccountability"].includes(payload.name))projected=reportView(result,u);
+ if(["addComment","moderateComment","editComment","withdrawComment"].includes(payload.name)&&result)projected=result.authorId===u.id?result:{...result,authorId:"comment-author:"+result.id,reviewedBy:undefined,history:undefined,versions:undefined};
+ const [scores,unread,counts]=await env.DB.batch([env.DB.prepare("SELECT points FROM score_totals WHERE user_id=?").bind(userId),env.DB.prepare("SELECT count(*) AS n FROM entities WHERE kind='notifications' AND owner_id=? AND json_extract(head,'$.read')=0").bind(userId),...(["vote","toggleBookmark"].includes(payload.name)?[env.DB.prepare("SELECT up,down FROM vote_totals WHERE article_id=?").bind(payload.args[0])]:[])]);
+ if(["vote","toggleBookmark"].includes(payload.name))projected={articleId:payload.args[0],bookmarked:after.bookmarks.some(b=>b.userId===userId&&b.articleId===payload.args[0]),mine:after.votes.find(v=>v.userId===userId&&v.articleId===payload.args[0])?.value||0,...(counts.results[0]||{up:0,down:0})};
+ return {result:projected,revision,recordVersions,profile:{user:member(actor,actor),points:scores.results[0]?.points||0,unread:unread.results[0].n}};
 }
 export async function scheduled(env){
  // Free D1 allows 50 statements per invocation. Five publications in one
@@ -107,8 +123,8 @@ export async function scheduled(env){
 export async function me(env,userId){
  if(!userId)return {user:null,unread:0};
  const b=await actorScope(env.DB,userId),u=b.state.users.find(x=>x.id===userId);
- const n=await env.DB.prepare("SELECT count(*) AS n FROM entities WHERE kind='notifications' AND owner_id=? AND json_extract(head,'$.read')=0").bind(userId).first();
- const total=await env.DB.prepare("SELECT points FROM score_totals WHERE user_id=?").bind(userId).first();return {user:member(u,u),points:total?.points||0,recordVersions:{["users/"+userId]:b.versions["users/"+userId]},unread:n.n};
+ const [counts,totals]=await env.DB.batch([env.DB.prepare("SELECT count(*) AS n FROM entities WHERE kind='notifications' AND owner_id=? AND json_extract(head,'$.read')=0").bind(userId),env.DB.prepare("SELECT points FROM score_totals WHERE user_id=?").bind(userId)]);
+ return {user:member(u,u),points:totals.results[0]?.points||0,recordVersions:{["users/"+userId]:b.versions["users/"+userId]},unread:counts.results[0].n};
 }
 
 export function reportView(r,u){if(rank(u)>=r.requiredRank||r.originalReviewerId===u.id)return {...r,reporterId:r.reporterId===u.id?u.id:"reporter:"+r.id,authorId:r.authorId===u.id?u.id:"author:"+r.articleId};const {id,articleId,articleTitle,reason,evidence,status,createdAt,updatedAt,decidedAt,verdictNote,remedy}=r;return {id,articleId,articleTitle,reason,evidence,status,createdAt,updatedAt,decidedAt,verdictNote,remedy}}

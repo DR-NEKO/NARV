@@ -13,6 +13,8 @@
     "backup": "node scripts/backup.mjs"
   },
   "devDependencies": {
+    "@tanstack/query-core": "5.104.0",
+    "esbuild": "0.28.1",
     "wrangler": "4.142.0"
   }
 }

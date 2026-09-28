@@ -33,15 +33,15 @@ export function referencedImages(content, images = {}) {
 }
 export function prepareImages(content, images = {}, submitting = false) {
   const compact = compactImages(content, images), refs = imageReferences(compact.content);
-  if ((compact.content.match(/!\[[^\]]*\]\([^)]*\)/g) || []).length > 3)
-    throw Error("每篇最多 3 张图片。");
+  if ((compact.content.match(/!\[[^\]]*\]\([^)]*\)/g) || []).length > 10)
+    throw Error("每篇最多 10 张图片。");
   for (const {id} of refs) {
     if (Object.hasOwn(compact.images, id) && !validImageSource(compact.images[id]))
       throw Error("图片格式不受支持或压缩后仍过大，请重新插入。");
     if (submitting && !validImageSource(compact.images[id]))
       throw Error("正文中的图片附件缺失，请移除对应标记或重新插入图片。");
   }
-  return {content: compact.content, images: referencedImages(compact.content, compact.images)};
+  const selected=referencedImages(compact.content,compact.images);if(Object.values(selected).filter(x=>dataImage.test(x)).reduce((n,x)=>n+x.length,0)>1200000)throw Error("图片总大小超过限额，请重新插入图片以自动压缩。");return {content: compact.content, images: selected};
 }
 export function expandImages(content, images = {}) {
   return String(content || "").replace(shortImage, (_, caption, id) =>

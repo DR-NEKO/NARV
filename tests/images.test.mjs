@@ -20,7 +20,7 @@ test("附件随稿件验证，缺失阻止提交、危险来源拒绝、无引�
  assert.throws(()=>prepareImages(ref,{},true),/缺失/);
  assert.doesNotThrow(()=>prepareImages(ref,{},false));
  assert.throws(()=>prepareImages(ref,{"img-1":"javascript:alert(1)"},true));
- assert.throws(()=>prepareImages(Array(4).fill(ref).join("\n\n"),{"img-1":png},true),/最多/);
+ assert.throws(()=>prepareImages(Array(11).fill(ref).join("\n\n"),{"img-1":png},true),/最多/);
  const images={"img-1":png,"img-2":png};
  assert.deepEqual(prepareImages(ref,images,true).images,{"img-1":png});
  const s={id:"a",content:ref,images,status:"published",publishedAt:"2026-09-28",author:"测试"};
@@ -43,4 +43,11 @@ test("提交版本独立保存附件，下一版本替换不污染历史",()=>{
  s=evolve(s,"submit",author,data);
  assert.equal(s.versions[0].images["img-1"],png);
  assert.equal(s.versions[1].images["img-1"],data.images["img-1"]);
+});
+
+test("单篇十张图片可提交，第十一张及超出总预算会拒绝",()=>{
+ const images=Object.fromEntries(Array.from({length:10},(_,i)=>["img-"+(i+1),png]));
+ const body=Array.from({length:10},(_,i)=>"![图"+i+"](narv-image:img-"+(i+1)+")").join("\\n\\n");
+ assert.equal(Object.keys(prepareImages(body,images,true).images).length,10);
+ assert.throws(()=>prepareImages(body+"\\n![额外](narv-image:img-1)",images,true),/10/);
 });

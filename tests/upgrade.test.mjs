@@ -54,7 +54,7 @@ test("举报按历史审稿权限 +1 分派，相关当事人回避，扣分仅�
  await assert.rejects(run(e,"demo-temp","claimAccountability",[caseRaw.id]),/高权限/);
  await run(e,"demo-reviewer","claimAccountability",[caseRaw.id]);await run(e,"demo-reviewer","resolveAccountability",[caseRaw.id,{verdict:"upheld",remedy:"notice",penalty:3,note:"核对原始记录后确认该段落的数据错误，但暂不足以撤稿，公开复核说明并扣除三分。",conflictFree:true}]);
  assert.equal((await me(e,"demo-temp")).points,-2);assert.equal((await me(e,"demo-author")).points,2);
- assert((await bootstrap(e,"demo-author")).notifications.some(n=>n.title==="你的稿件复核已完成"));
+ assert((await bootstrap(e,"demo-author",{tab:"messages"})).notifications.some(n=>n.title==="你的稿件复核已完成"));
  const pub=await(await publicResponse(new Request(e.API_URL+"/api/public/articles/"+id),e)).json();assert(pub.article.accountabilityNotice);assert(!JSON.stringify(pub).includes("demo-author"));assert(!Object.hasOwn(pub.article,"identity"));
  const {result:r2}=await run(e,"reader-1","report",[id,{reason}]);await run(e,"demo-reviewer","claimAccountability",[r2.id]);await run(e,"demo-reviewer","resolveAccountability",[r2.id,{verdict:"upheld",remedy:"retract",penalty:5,note:"复核同一版本，确认问题达到撤稿程度，同一版本既有扣分不重复扣除。",conflictFree:true}]);assert.equal((await me(e,"demo-temp")).points,-2);
  assert.equal((await(await publicResponse(new Request(e.API_URL+"/api/public/articles/"+id),e)).json()).article.status,"retracted");
