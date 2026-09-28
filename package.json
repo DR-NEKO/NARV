@@ -1,0 +1,17 @@
+{
+  "name": "narv",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/serve.mjs",
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "dev:api": "node scripts/serve-backend.mjs",
+    "deploy:api": "npx wrangler deploy --config backend/wrangler.toml",
+    "db:migrate": "npx wrangler d1 migrations apply narv --remote --config backend/wrangler.toml"
+  },
+  "devDependencies": {
+    "wrangler": "4.142.0"
+  }
+}

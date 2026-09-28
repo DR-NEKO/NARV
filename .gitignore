@@ -1,0 +1,11 @@
+dist/
+node_modules/
+.wrangler/
+.env
+.dev.vars
+artifacts/
+
+.local/
+backend/.dev.vars
+*.sqlite
+*.sqlite-*

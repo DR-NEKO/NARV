@@ -1,0 +1,19 @@
+name = "narv-api"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+[vars]
+FRONTEND_URL = "https://DR-NEKO.github.io/NARV/"
+API_URL = "https://narv-api.dr-neko-narv.workers.dev"
+GITHUB_CLIENT_ID = ""
+ORIGINAL_EDITOR_GITHUB_ID = "143079338"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "narv"
+database_id = "464ab2f2-56d6-4744-a963-09576ee39808"
+migrations_dir = "migrations"
+
+[triggers]
+crons = ["* * * * *"]

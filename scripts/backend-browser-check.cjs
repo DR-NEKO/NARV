@@ -1,0 +1,41 @@
+const {chromium}=require("C:/Users/007/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright");
+const assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),os=require("node:os"),{spawn}=require("node:child_process"),{pathToFileURL}=require("node:url");
+const mod=p=>import(pathToFileURL(path.join(__dirname,p)).href);
+(async()=>{
+ const [{sqlite},{load,save,engine},{initialUsers},{withIdentities},{newSession},{command}]=await Promise.all([mod("sqlite-adapter.mjs"),mod("../backend/repository.js"),mod("../public/roles.js"),mod("../public/identity.js"),mod("../backend/auth.js"),mod("../backend/service.js")]);
+ const dataDir=fs.mkdtempSync(path.join(os.tmpdir(),"narv-api-test-")),DB=sqlite(path.join(dataDir,"narv.sqlite")),env={DB};
+ const before=await load(DB),st=structuredClone(before.state);st.users=initialUsers.map(withIdentities);await save(DB,before,st);
+ const run=async (id,name,args)=>command(env,id,{name,args,revision:(await load(DB)).revision});
+ const d={title:"后端联调：收藏与我的帖子",category:"科研与实践",summary:"这篇测试稿件用于检查浏览器与真实数据库之间的数据流。",content:"一篇值得重读的文章需要交代背景、方法和具体条件，也需要解释结论的局限。".repeat(5),consents:{original:true,privacy:true,policy:true,responsibility:true}};
+ const {result:s}=await run("demo-author","create",[d]);await run("demo-author","action",[s.id,"submit",d]);await run("demo-temp","action",[s.id,"claim"]);await run("demo-temp","action",[s.id,"review",{decision:"accept",expectedVersion:1,conflictFree:true,note:"背景与论据已经补充完整，同意公开发表。"}]);await run("demo-author","action",[s.id,"publish",{publishConsent:true}]);
+ const tokens={};for(const id of ["demo-author","demo-temp"])tokens[id]=await newSession(env,id);DB.close();
+ const server=spawn(process.execPath,[path.join(__dirname,"serve-backend.mjs")],{env:{...process.env,NARV_API_PORT:"4175",NARV_DATA_DIR:dataDir},windowsHide:true,stdio:["ignore","pipe","pipe"]});
+ let logs="";server.stdout.on("data",d=>logs+=d);server.stderr.on("data",d=>logs+=d);
+ let browser;
+ try{
+  await new Promise((resolve,reject)=>{const deadline=setTimeout(()=>reject(Error(logs||"API startup timeout")),10000);server.stdout.on("data",()=>{if(logs.includes("database-backed preview")){clearTimeout(deadline);resolve()}});server.on("exit",()=>{clearTimeout(deadline);reject(Error(logs))})});
+  browser=await chromium.launch({headless:true,args:["--no-proxy-server"],executablePath:"C:/Program Files/Google/Chrome/Application/chrome.exe"});
+  const context=await browser.newContext({viewport:{width:1440,height:1000}}),page=await context.newPage(),errors=[];
+  page.on("pageerror",e=>errors.push(e.message));
+  const go=async route=>{await page.goto("http://localhost:4175/#/"+route);await page.locator("main h1").waitFor()};
+  const as=async id=>{await page.evaluate(token=>sessionStorage.setItem("narv-api-session",token),tokens[id]);await page.goto("http://localhost:4175/#/workspace");await page.locator("main h1").waitFor()};
+  await go("");assert.equal(await page.locator(".demo-strip").count(),0);await go("login");await page.getByRole("button",{name:"使用 GitHub 登录",exact:true}).waitFor();assert.equal(await page.locator("[data-account]").count(),0);
+  await as("demo-author");await go("workspace/posts");await page.getByRole("link",{name:d.title,exact:true}).waitFor();
+  await page.getByRole("link",{name:"阅读帖子 →",exact:true}).click();await page.locator("[data-bookmark]").click();await page.waitForFunction(()=>document.querySelector("[data-bookmark]")?.getAttribute("aria-pressed")==="true");
+  await go("workspace/bookmarks");await page.getByRole("link",{name:d.title,exact:true}).waitFor();await page.reload();await page.getByRole("link",{name:d.title,exact:true}).waitFor();
+  await go("article/"+s.id);
+  const comment="从复现角度补充一个具体观察：不同的数据划分会改变结果，因此应说明划分的依据、随机种子以及异常样本处理方式。".repeat(3);
+  await page.locator('#comment-form [name="content"]').fill(comment);await page.locator('[name="commentConsent"]').check();await page.getByRole("button",{name:"提交中长评论，等待审核"}).click();await page.locator(".reply .label").filter({hasText:"待审核"}).waitFor();
+  await go("workspace/my-comments");await page.locator(".personal-card .label").filter({hasText:"待审核"}).waitFor();
+  await as("demo-temp");await go("workspace/comments");await page.getByText("退回修改",{exact:true}).click();await page.locator('.comment-reject-form [name="note"]').fill("请补充实际例子和数据来源，再重新提交。");await page.getByRole("button",{name:"说明原因并退回"}).click();await page.getByRole("heading",{name:"回应队列为空"}).waitFor();
+  await as("demo-author");await go("workspace/my-comments");await page.getByText("审核意见：请补充实际例子和数据来源，再重新提交。").waitFor();await page.getByText("修改并重新提交",{exact:true}).click();await page.locator('.comment-edit-form [name="content"]').fill(comment+"这里补充一个具体课程实践案例。");await page.locator('.comment-edit-form [name="consent"]').check();await page.getByRole("button",{name:"重新提交审核"}).click();await page.locator(".personal-card .label").filter({hasText:"待审核"}).waitFor();
+  await as("demo-temp");await go("workspace/comments");await page.getByRole("button",{name:"通过并公开"}).click();await page.getByRole("heading",{name:"回应队列为空"}).waitFor();
+  await as("demo-author");await go("workspace/my-comments");await page.locator(".personal-card .label").filter({hasText:"已公开"}).waitFor();
+  const artifacts=path.join(__dirname,"../artifacts");fs.mkdirSync(artifacts,{recursive:true});await page.screenshot({path:path.join(artifacts,"my-comments-api.png"),fullPage:true});
+  await page.setViewportSize({width:390,height:844});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  page.once("dialog",d=>d.accept());await page.getByRole("button",{name:"撤回评论"}).click();await page.locator(".personal-card .label").filter({hasText:"已撤回"}).waitFor();
+  await go("workspace/bookmarks");await page.getByRole("button",{name:"取消收藏"}).click();await page.getByRole("heading",{name:"还没有收藏文章"}).waitFor();
+  await page.setViewportSize({width:1440,height:1000});await go("submit");await page.locator('[name="title"]').fill("通过 API 保存的草稿");await page.locator('[name="summary"]').fill(d.summary);await page.locator('[name="content"]').fill(d.content);await page.getByRole("button",{name:"暂存草稿",exact:true}).click();await page.locator(".status.draft").waitFor();await page.reload();await page.getByRole("heading",{name:"通过 API 保存的草稿"}).waitFor();
+  assert.deepEqual(errors,[]);console.log("PASS: remote UI, no demo switch, database-backed posts/bookmarks, comment reject/revise/approve/withdraw, account isolation, persistent draft, mobile layout.");
+ }finally{if(browser)await browser.close();server.kill()}
+})().catch(e=>{console.error(e);process.exit(1)});

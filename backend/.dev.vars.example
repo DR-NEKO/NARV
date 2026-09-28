@@ -1,0 +1,2 @@
+# Copy to .dev.vars only for local development. Never commit the real file.
+GITHUB_CLIENT_SECRET="replace-locally"
