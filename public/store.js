@@ -44,3 +44,8 @@ export const resolveAccountability=(...args)=>local().resolveAccountability(...a
 export const scores=(...args)=>local().scores(...args);
 
 export const deleteDraft=(...args)=>local().deleteDraft(...args);
+
+export const resubmit=(...args)=>local().resubmit(...args);
+export const suspendAccount=(...args)=>local().suspendAccount(...args);
+export const removeContent=(...args)=>local().removeContent(...args);
+export const transferOE=(...args)=>local().transferOE(...args);

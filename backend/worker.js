@@ -1,3 +1,4 @@
+import {memberDetail,accountConfirmation,closeAccount} from "./account-admin.js";
 import {articleState} from "./interactions.js";
 import {publicResponse} from "./public-content.js";
 import {authRoute,userFromRequest} from "./auth.js";
@@ -36,8 +37,12 @@ export default {
    if(url.pathname==="/api/bootstrap"&&req.method==="GET") {
     return finish(Response.json(await bootstrap(env,userId,{thin:false})));
    }
-   if(url.pathname==="/api/workspace"&&req.method==="GET"){if(!userId)return finish(Response.json({error:"请先登录。"},{status:401}));return finish(Response.json(await bootstrap(env,userId,{tab:url.searchParams.get("tab")||"",page:Number(url.searchParams.get("page"))||1})))}
+   if(url.pathname==="/api/workspace"&&req.method==="GET"){if(!userId)return finish(Response.json({error:"请先登录。"},{status:401}));return finish(Response.json(await bootstrap(env,userId,{tab:url.searchParams.get("tab")||"",page:Number(url.searchParams.get("page"))||1,query:url.searchParams.get("q")||"",side:url.searchParams.get("side")||"review",reason:url.searchParams.get("reason")||""})))}
    if(url.pathname==="/api/me"&&req.method==="GET"){return finish(Response.json(await me(env,userId)))}
+   if(url.pathname==="/api/account-confirm"&&req.method==="POST"){if(!userId)return finish(Response.json({error:"请先登录。"},{status:401}));return finish(Response.json(await accountConfirmation(env,userId,body)))}
+   if(url.pathname==="/api/account-close"&&req.method==="POST"){if(!userId)return finish(Response.json({error:"请先登录。"},{status:401}));return finish(Response.json(await closeAccount(env,userId,body)))}
+   const memberId=url.pathname.match(/^\/api\/members\/([^/]+)$/);
+   if(memberId&&req.method==="GET"){if(!userId)return finish(Response.json({error:"请先登录。"},{status:401}));return finish(Response.json(await memberDetail(env,userId,memberId[1])))}
    const interaction=url.pathname.match(/^\/api\/article-state\/([^/]+)$/);
    if(interaction&&req.method==="GET"){if(!userId)return finish(Response.json({error:"请先登录。"},{status:401}));return finish(Response.json(await articleState(env,userId,interaction[1])))}
    const caseId=url.pathname.match(/^\/api\/reports\/([^/]+)$/);

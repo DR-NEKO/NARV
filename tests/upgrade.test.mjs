@@ -57,7 +57,7 @@ test("举报按历史审稿权限 +1 分派，相关当事人回避，扣分仅�
  assert((await bootstrap(e,"demo-author",{tab:"messages"})).notifications.some(n=>n.title==="你的稿件复核已完成"));
  const pub=await(await publicResponse(new Request(e.API_URL+"/api/public/articles/"+id),e)).json();assert(pub.article.accountabilityNotice);assert(!JSON.stringify(pub).includes("demo-author"));assert(!Object.hasOwn(pub.article,"identity"));
  const {result:r2}=await run(e,"reader-1","report",[id,{reason}]);await run(e,"demo-reviewer","claimAccountability",[r2.id]);await run(e,"demo-reviewer","resolveAccountability",[r2.id,{verdict:"upheld",remedy:"retract",penalty:5,note:"复核同一版本，确认问题达到撤稿程度，同一版本既有扣分不重复扣除。",conflictFree:true}]);assert.equal((await me(e,"demo-temp")).points,-2);
- assert.equal((await(await publicResponse(new Request(e.API_URL+"/api/public/articles/"+id),e)).json()).article.status,"retracted");
+ assert.equal((await publicResponse(new Request(e.API_URL+"/api/public/articles/"+id),e)).status,404);
  }finally{e.DB.close()}
 });
 test("正式发表和审稿积分不重复；点赞收藏同人只计一次，奖励新高和单稿上限",async()=>{

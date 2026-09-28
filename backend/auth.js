@@ -39,10 +39,11 @@ export async function authRoute(req,env,body,fetcher=fetch) {
    if(user&&user.loginKey!==identityKey){const after=structuredClone(before.state);Object.assign(after.users[0],withIdentities(after.users[0]),{loginKey:identityKey});await save(env.DB,before,after);user=after.users[0]}
    if(!user){
      const id=crypto.randomUUID(),a=random().slice(0,6),b=random().slice(0,6);
-     const role=String(profile.id)===String(env.ORIGINAL_EDITOR_GITHUB_ID)&&!before.state.users.some(u=>u.role==="original_editor")?"original_editor":"user";
+     const designated=String(profile.id)===String(env.ORIGINAL_EDITOR_GITHUB_ID),existsOE=designated?await env.DB.prepare("SELECT id FROM entities WHERE kind=\'users\' AND role=\'original_editor\' LIMIT 1").first():null;const role=designated&&!existsOE?"original_editor":"user";
      user=withIdentities({id,loginKey:identityKey,name:"读者"+a,community:{name:"读者"+a,avatar:"◈"},review:{name:"行者"+b,avatar:"◇"},role});
      const after=structuredClone(before.state);after.users.push(user);try{await save(env.DB,before,after)}catch(error){if(error.status!==409)throw error;const existing=await select(env.DB,"kind='users' AND login_key=?",[identityKey],{limit:1});if(!existing.length)throw error;user=(await loadKeys(env.DB,[existing[0].key])).state.users[0]}
    }
+   if(user.accountStatus==="deleting")throw Error("此账号已注销，数据清理尚未完成。");
    const ticket=random();await put(env.DB,"ticket",ticket,{userId:user.id,challenge:pending.challenge},60000);
    base.hash="/auth-complete?ticket="+ticket;
    const response=redirect(base.href);response.headers.set("Set-Cookie","narv_oauth=; Path=/auth/; HttpOnly; Secure; SameSite=Lax; Max-Age=0");return response;

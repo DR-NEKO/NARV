@@ -7,7 +7,7 @@ export async function publicStatements(db,encoded,removed,{apiBase=""}={}){
  for(const key of removed)statements.push(db.prepare("DELETE FROM public_documents WHERE key=?").bind(key),db.prepare("DELETE FROM public_blob_refs WHERE document_key=?").bind(key));
  for(const entry of encoded){
   const s=entry.packed,kind=entry.meta.kind;let doc=null;
-  if(kind==="submissions"&&["published","retracted"].includes(s.status))doc={...publicArticle({...s,images:{},authorAvatar:"◈"}),images:s.status==="retracted"?{}:Object.fromEntries(Object.entries(s.images||{}).map(([k,v])=>[k,mediaURL(v,apiBase)])),avatar:mediaURL(s.authorAvatar||"◈",apiBase),isLocal:false};
+  if(kind==="submissions"&&(["published","retracted"].includes(s.status)||s.publicSnapshot)&&!["ban","temporary_down"].includes(s.moderation?.kind))doc={...publicArticle({...s,images:{},authorAvatar:"◈"}),images:s.status==="retracted"?{}:Object.fromEntries(Object.entries(s.publicSnapshot?.images||s.images||{}).map(([k,v])=>[k,mediaURL(v,apiBase)])),avatar:mediaURL(s.publicSnapshot?.authorAvatar||s.authorAvatar||"◈",apiBase),isLocal:false};
   if(kind==="comments"&&s.status==="published")doc={id:s.id,articleId:s.articleId,author:s.author,avatar:mediaURL(s.avatar||"◈",apiBase),content:s.content,status:s.status,createdAt:s.createdAt,updatedAt:s.updatedAt};
   if(kind==="announcements"&&s.active&&s.audience==="public")doc={id:s.id,title:s.title,content:s.content,audience:"public",date:s.date,pinned:s.pinned,active:true};
   if(!["submissions","comments","announcements"].includes(kind))continue;

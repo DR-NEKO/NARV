@@ -1,3 +1,5 @@
+import {processErasure} from "./account-admin.js";
+import {suspended,expireTemporary} from "../public/moderation.js";
 import {award} from "../public/accountability.js";
 import {actorScope,workspaceScope,submissionScope,commandScope} from "./scopes.js";
 import {hydrate} from "./codec.js";
@@ -7,7 +9,7 @@ import {rank} from "../public/roles.js";
 import {face} from "../public/identity.js";
 import {canView} from "../public/workflow.js";
 export const publicComment=c=>({id:c.id,articleId:c.articleId,author:c.author,avatar:c.avatar,content:c.content,status:c.status,createdAt:c.createdAt,updatedAt:c.updatedAt});
-function member(u,actor){return u.id===actor?.id?{id:u.id,name:face(u).name,role:u.role,community:face(u),review:face(u,"review")}:{id:u.id,name:face(u,"review").name,role:u.role,review:face(u,"review"),community:{name:"身份受限",avatar:"◇"}}}
+function member(u,actor){return u.id===actor?.id?{id:u.id,name:face(u).name,role:u.role,community:face(u),review:face(u,"review"),suspension:u.suspension||null,accountStatus:u.accountStatus||"active"}:{id:u.id,name:face(u,"review").name,role:u.role,review:face(u,"review"),community:{name:"身份受限",avatar:"◇"},suspension:u.suspension||null,accountStatus:u.accountStatus||"active"}}
 export function submissionView(s,u){
  const item=structuredClone(s);if(s.authorId===u?.id)return item;
  delete item.workingDraft;
@@ -28,6 +30,7 @@ export function snapshot(state,userId,revision=0) {
    voteTotals:Object.fromEntries(articles.map(a=>[a.id,db.votes(a.id,u)]))};
 }
 const commands={
+ resubmit:(d,u,a)=>d.resubmit(u,...a),suspendAccount:(d,u,a)=>d.suspendAccount(u,...a),removeContent:(d,u,a)=>d.removeContent(u,...a),transferOE:(d,u,a)=>d.transferOE(u,...a),
  report:(d,u,a)=>d.report(u,...a),claimAccountability:(d,u,a)=>d.claimAccountability(u,...a),resolveAccountability:(d,u,a)=>d.resolveAccountability(u,...a),
  create:(d,u,a)=>d.create(u,a[0]),action:(d,u,a)=>d.action(a[0],a[1],u,a[2]||{}),
  addComment:(d,u,a)=>d.addComment(u,...a),moderateComment:(d,u,a)=>d.moderateComment(u,...a),
@@ -42,7 +45,8 @@ export async function publicParts(db){
  return {articles:rows.results.filter(r=>r.kind==="articles").map(r=>JSON.parse(r.data)),comments:rows.results.filter(r=>r.kind==="comments").map(r=>JSON.parse(r.data)),announcements:rows.results.filter(r=>r.kind==="announcements").map(r=>JSON.parse(r.data))};
 }
 async function views(env,before,userId,{thin=true}={}){
- const data=snapshot(before.state,userId,before.revision);
+ const data=snapshot(before.state,userId,before.revision);if(before.communitySearch)for(const member of data.users){const source=before.state.users.find(u=>u.id===member.id);member.community=face(source);member.communitySearch=true}
+ if(before.memberIds)data.memberResults=data.users.filter(u=>before.memberIds.includes(u.id));
  const ids=[...new Set([...before.state.submissions.filter(s=>s.authorId===userId).map(s=>s.id),...before.state.bookmarks.map(b=>b.articleId),...before.state.comments.map(c=>c.articleId)])];
  const memberIds=before.state.users.map(x=>x.id);
  const [rows,scoreRows,memberScores,totals,unread]=await env.DB.batch([
@@ -63,7 +67,7 @@ async function views(env,before,userId,{thin=true}={}){
 }
 export async function bootstrap(env,userId,options={}){
  if(!userId){const pub=await publicParts(env.DB);return {...snapshot(engine().state()),...pub,recordVersions:{}}}
- const before=await workspaceScope(env.DB,userId,options);return views(env,before,userId,{thin:options.thin!==false});
+ const before=await workspaceScope(env.DB,userId,options);if(options.tab==="members"&&options.side==="community"){const actor=before.state.users.find(u=>u.id===userId);if(rank(actor)<4||options.reason?.trim().length<10)throw Error("搜索社区身份需要 Editor 权限和至少 10 字查询原因。");const audit={id:crypto.randomUUID(),actorId:userId,targetId:"search",reason:options.reason.trim(),query:options.query?.slice(0,80)||"",date:new Date().toISOString()};const only=await actorScope(env.DB,userId),after=structuredClone(only.state);after.identityAudits.push(audit);await save(env.DB,only,after);before.state.identityAudits.push(audit);before.communitySearch=true}return views(env,before,userId,{thin:options.thin!==false});
 }
 export async function detail(env,userId,id,version){
  const before=await submissionScope(env.DB,userId,id),u=before.state.users.find(x=>x.id===userId),s=before.state.submissions.find(x=>x.id===id);
@@ -76,10 +80,12 @@ export async function detail(env,userId,id,version){
 export async function command(env,userId,payload){
  if(!Object.hasOwn(commands,payload?.name)||!Array.isArray(payload.args)||payload.args.length>6)throw Error("无效操作。");
  const before=await commandScope(env.DB,userId,payload.name,payload.args),u=before.state.users.find(x=>x.id===userId);
- const primary={deleteDraft:"submissions",claimAccountability:"reports",resolveAccountability:"reports",action:"submissions",moderateComment:"comments",editComment:"comments",withdrawComment:"comments",endorse:"applications",promote:"users",archiveAnnouncement:"announcements",updateProfiles:"users"};
+ if(suspended(u)&&payload.name!=="markRead"){const e=Error("账号处于封禁状态，不能进行此操作。");e.status=403;throw e}
+ const primary={resubmit:"submissions",suspendAccount:"users",transferOE:"users",deleteDraft:"submissions",claimAccountability:"reports",resolveAccountability:"reports",action:"submissions",moderateComment:"comments",editComment:"comments",withdrawComment:"comments",endorse:"applications",promote:"users",archiveAnnouncement:"announcements",updateProfiles:"users"};
  const key=primary[payload.name]?primary[payload.name]+"/"+(payload.name==="updateProfiles"?userId:payload.args[0]):null;
  if(key&&payload.recordVersions?.[key]!==undefined&&payload.recordVersions[key]!==before.versions[key]){const e=Error("这条记录已有更新，请刷新后重新操作。");e.status=409;throw e}
- if(payload.name==="create"){const count=await env.DB.prepare("SELECT count(*) AS n FROM entities WHERE kind='submissions' AND owner_id=?").bind(userId).first();if(count.n>=200)throw Error("每个账号最多保留 200 篇稿件；请先整理草稿。")}
+ if(["create","resubmit"].includes(payload.name)){const count=await env.DB.prepare("SELECT count(*) AS n FROM entities WHERE kind='submissions' AND owner_id=?").bind(userId).first();if(count.n>=200)throw Error("每个账号最多保留 200 篇稿件；请先整理草稿。")}
+ if(payload.name==="transferOE")before.dependencies.push("users/"+payload.args[0]);
  if(payload.name==="updateProfiles")before.dependencies.push(...before.state.users.map(x=>"users/"+x.id));
  const domain=engine(before.state),result=commands[payload.name](domain,u,payload.args),after=domain.state(),extra=[];
  if(payload.name==="vote"){
@@ -94,10 +100,10 @@ export async function command(env,userId,payload){
  const revision=await save(env.DB,before,after,{extra,publicize});
  const actor=after.users.find(x=>x.id===userId),actorChanged=JSON.stringify(actor)!==JSON.stringify(u),recordVersions={["users/"+userId]:before.versions["users/"+userId]+Number(actorChanged)};
  if(key&&payload.name!=="updateProfiles"&&after[primary[payload.name]]?.some(x=>x.id===payload.args[0]))recordVersions[key]=(before.versions[key]||0)+1;
- if(payload.name==="create")recordVersions["submissions/"+result.id]=1;
+ if(["create","resubmit"].includes(payload.name))recordVersions["submissions/"+result.id]=1;
  if(payload.name==="addComment")recordVersions["comments/"+result.id]=1;
- let projected=result??null;
- if(["create","action"].includes(payload.name)){projected=submissionView(result,u);delete projected.images;if(typeof projected.authorAvatar==="object")delete projected.authorAvatar;projected.versions=projected.versions.map(v=>({version:v.version,title:v.title,date:v.date}));if(projected.workingDraft)delete projected.workingDraft.images}
+ let projected=result??null;if(payload.name==="suspendAccount")projected=member(result,u);
+ if(["create","action","resubmit"].includes(payload.name)){projected=submissionView(result,u);delete projected.images;if(typeof projected.authorAvatar==="object")delete projected.authorAvatar;projected.versions=projected.versions.map(v=>({version:v.version,title:v.title,date:v.date}));if(projected.workingDraft)delete projected.workingDraft.images;if(projected.publicSnapshot){delete projected.publicSnapshot.images;delete projected.publicSnapshot.content}}
  if(["report","claimAccountability","resolveAccountability"].includes(payload.name))projected=reportView(result,u);
  if(["addComment","moderateComment","editComment","withdrawComment"].includes(payload.name)&&result)projected=result.authorId===u.id?result:{...result,authorId:"comment-author:"+result.id,reviewedBy:undefined,history:undefined,versions:undefined};
  const [scores,unread,counts]=await env.DB.batch([env.DB.prepare("SELECT points FROM score_totals WHERE user_id=?").bind(userId),env.DB.prepare("SELECT count(*) AS n FROM entities WHERE kind='notifications' AND owner_id=? AND json_extract(head,'$.read')=0").bind(userId),...(["vote","toggleBookmark"].includes(payload.name)?[env.DB.prepare("SELECT up,down FROM vote_totals WHERE article_id=?").bind(payload.args[0])]:[])]);
@@ -107,7 +113,13 @@ export async function command(env,userId,payload){
 export async function scheduled(env){
  // Free D1 allows 50 statements per invocation. Five publications in one
  // transaction plus one eight-step support reward and cleanup use at most 49.
- const due=await env.DB.prepare("SELECT key FROM entities WHERE kind='submissions' AND status='scheduled' AND scheduled_at<=? ORDER BY scheduled_at,key LIMIT 5").bind(new Date().toISOString()).all();
+ const nowISO=new Date().toISOString();
+ const plan=await env.DB.prepare("SELECT user_id AS key,phase,'erase' AS task FROM (SELECT user_id,phase FROM account_erasure ORDER BY created_at LIMIT 1) UNION ALL SELECT key,'' AS phase,'expire' AS task FROM (SELECT key FROM entities WHERE kind='submissions' AND json_extract(head,'$.moderation.kind')='temporary_down' AND json_extract(head,'$.moderation.deadline')<=? ORDER BY key LIMIT 2) UNION ALL SELECT key,'' AS phase,'publish' AS task FROM (SELECT key FROM entities WHERE kind='submissions' AND status='scheduled' AND scheduled_at<=? ORDER BY scheduled_at,key LIMIT 5) UNION ALL SELECT key,'' AS phase,'release' AS task FROM (SELECT s.key FROM entities s JOIN entities u ON u.key='users/'||s.reviewer_id WHERE s.kind='submissions' AND s.status IN ('reviewing','submitted') AND (json_extract(u.head,'$.suspension.permanent')=1 OR json_extract(u.head,'$.suspension.until')>? OR json_extract(u.head,'$.accountStatus')='deleting') ORDER BY s.key LIMIT 2)").bind(nowISO,nowISO,nowISO).all();
+ const job=plan.results.find(r=>r.task==="erase");if(job){await processErasure(env,{user_id:job.key,phase:job.phase});return}
+ const expired=plan.results.filter(r=>r.task==="expire");
+ if(expired.length){const before=await loadKeys(env.DB,expired.map(r=>r.key)),after=structuredClone(before.state);after.submissions=after.submissions.map(s=>expireTemporary(s));await save(env.DB,before,after,{publicize:(db,e,r)=>publicStatements(db,e,r,{apiBase:env.API_URL||""})});return}
+ const releases=plan.results.filter(r=>r.task==="release");if(releases.length){const before=await loadKeys(env.DB,releases.map(r=>r.key)),after=structuredClone(before.state);for(const s of after.submissions){s.reviewerId=null;s.status="submitted";s.updatedAt=nowISO;s.history.push({actorId:"scheduler",role:"system",date:nowISO,label:"原审稿账号已停用，释放任务"})}await save(env.DB,before,after);return}
+ const due={results:plan.results.filter(r=>r.task==="publish")};
  if(due.results.length){const before=await loadKeys(env.DB,due.results.map(r=>r.key));const domain=engine(before.state,{scheduler:true});try{await save(env.DB,before,domain.state(),{publicize:(db,e,r)=>publicStatements(db,e,r,{apiBase:env.API_URL||""})})}catch(e){if(e.status!==409)throw e}}
  const rewards=await env.DB.prepare("SELECT s.article_id,s.supporters,s.bonus_awarded FROM support_totals s JOIN entities e ON e.key='submissions/'||s.article_id AND e.status='published' WHERE s.supporters >= (s.bonus_awarded+1)*5 AND s.bonus_awarded<8 ORDER BY s.article_id LIMIT 1").all();
  for(const row of rewards.results){

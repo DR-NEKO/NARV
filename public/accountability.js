@@ -34,11 +34,12 @@ export function decideReport(state,actor,id,data){
  const s=state.submissions.find(s=>s.id===r.articleId);assert(s&&s.versions.some(v=>v.version===r.reportedVersion),"被举报版本不存在。");
  const now=new Date().toISOString();r.status=data.verdict;r.verdictNote=data.note.trim();r.decidedAt=now;r.updatedAt=now;r.penalty=penalty;r.penaltyApplied=false;
  if(r.status==="upheld"){
-  assert(["retract","notice"].includes(data.remedy),"请选择撤稿、要求更正或公开提示。");r.remedy=data.remedy;
-  if(penalty)r.penaltyApplied=award(state,r.originalReviewerId,"penalty:"+r.articleId+":v"+r.reportedVersion,-penalty,"发表稿件复核确认问题："+data.note.trim(),{sourceId:r.id,actorId:actor.id,date:now});
-  s.accountabilityNotice="复核确认存在问题："+data.note.trim();s.accountabilityAt=now;
-  if(data.remedy==="retract"&&s.status==="published"){s.status="retracted";s.retractionNote=s.accountabilityNotice;s.retractedAt=now;s.updatedAt=now}
-  s.history.push({actorId:actor.id,role:actor.role,date:now,label:"举报复核："+({retract:"撤稿",correction:"要求更正",notice:"公开提示"}[data.remedy])});
+  assert(["ban","temporary_down","nothing","caution","retract","notice"].includes(data.remedy),"请选择撤稿、要求更正或公开提示。");r.remedy=({retract:"ban",notice:"caution"}[data.remedy]||data.remedy);assert(s.moderation?.kind!=="ban"||["ban","nothing"].includes(r.remedy),"永久下架不能通过其他举报改为争议提示或暂时下架。");
+  if(penalty&&r.originalReviewerId!=="deleted")r.penaltyApplied=award(state,r.originalReviewerId,"penalty:"+r.articleId+":v"+r.reportedVersion,-penalty,"发表稿件复核确认问题："+data.note.trim(),{sourceId:r.id,actorId:actor.id,date:now});
+  if(r.remedy!=="nothing"){s.accountabilityNotice="复核确认存在问题："+data.note.trim();s.accountabilityAt=now;s.moderation={kind:r.remedy,reason:data.note.trim(),reportId:r.id,actorId:actor.id,requiredRank:rank(actor),date:now,deadline:r.remedy==="temporary_down"?new Date(Date.parse(now)+30*86400000).toISOString():null};s.updatedAt=now}
+  if(r.remedy==="ban"){s.status="banned";delete s.workingDraft;delete s.publicSnapshot}
+  if(r.remedy==="temporary_down"){s.status="temporary_down";s.reviewerId=null;s.requiredRank=rank(actor);delete s.publicSnapshot}
+  s.history.push({actorId:actor.id,role:actor.role,date:now,label:"举报复核："+({ban:"永久下架",temporary_down:"暂时下架",nothing:"无影响",caution:"争议提示",retract:"永久下架",notice:"争议提示"}[data.remedy])});
  }
  r.history.push({action:"decision",actorId:actor.id,verdict:r.status,penalty:r.penaltyApplied?-penalty:0,note:r.verdictNote,date:now});return r;
 }

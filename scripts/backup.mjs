@@ -5,7 +5,7 @@ import {decompress,references} from "../backend/codec.js";
 import path from "node:path";
 const directory=path.resolve(".local/backups");await mkdir(directory,{recursive:true,mode:0o700});
 const stamp=new Date().toISOString().replaceAll(":","-").replaceAll(".","-"),file=path.join(directory,"narv-"+stamp+".sql");
-const tables=["records","revision",...(!process.argv.includes("--legacy")?["entities","blobs","blob_links","public_documents","public_blob_refs","vote_totals","score_totals","support_totals","storage_totals"]:[])];
+const tables=["records","revision",...(!process.argv.includes("--legacy")?["entities","blobs","blob_links","public_documents","public_blob_refs","vote_totals","score_totals","support_totals","storage_totals",...(!process.argv.includes("--pre-lifecycle")?["account_erasure"]:[])]:[])];
 console.log("Exporting business data from D1...");
 await new Promise((resolve,reject)=>{const child=spawn(process.execPath,["node_modules/wrangler/bin/wrangler.js","d1","export","narv","--remote","--config","backend/wrangler.toml","--table",...tables,"--output",file],{stdio:["ignore","pipe","pipe"]});let output="";child.stdout.on("data",chunk=>output+=chunk);child.stderr.on("data",chunk=>output+=chunk);child.on("error",reject);child.on("exit",code=>{process.stdout.write(output.replace(/https?:\/\/[^\s]+/g,"[temporary download URL omitted]"));code===0?resolve():reject(Error("Backup export failed: "+code))})});
 await chmod(file,0o600);
