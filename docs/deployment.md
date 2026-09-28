@@ -1,6 +1,6 @@
 # 接通真实账号与后端
 
-2026-09-28。当前已经完成前后端 API 联调、SQLite 持久化、服务端权限和 GitHub OAuth 流程实现。已创建远程 D1 并迁移、部署 Cloudflare Worker；GitHub 仓库与前台已发布，OAuth Client ID／Secret 已配置；完整账号登录待本人验收。OAuth 回调以模拟 GitHub 响应测试；真实授权需完成下述配置后验收。
+2026-09-28。当前已经完成前后端 API 联调、SQLite 持久化、服务端权限和 GitHub OAuth 流程实现。已创建远程 D1 并迁移、部署 Cloudflare Worker；GitHub 仓库与前台已发布，OAuth Client ID／Secret 已配置；后台已确认首个真实账号、唯一 Original Editor 和有效登录会话。OAuth 回调以模拟 GitHub 响应测试；真实授权需完成下述配置后验收。
 
 ## 用户目前需要做什么
 
@@ -118,3 +118,9 @@ Windows 的 SQLite 数据在系统临时目录 narv-local-api 下，避免 WSL �
 后台：https://narv-api.dr-neko-narv.workers.dev
 
 Client ID 已配置，Secret 只保存在 Cloudflare。2026-09-28 已确认 health 返回 authConfigured=true；实际 GitHub 登录跳转已检查通过。首次本人登录回站仍需验收。
+
+## 管理员备份
+
+在项目目录执行 npm run backup。仅导出 records 与 revision，保存于被 Git 忽略的 .local/backups/，文件权限为 600。命令会在新建的本地 SQLite 中恢复业务记录、检查完整 JSON，并确认没有登录会话。恢复演练不修改线上数据库。D1 导出期间可能短暂暂停查询，建议选择低使用时段。
+
+2026-09-28 首轮导出与本地恢复通过。后续需把业务备份另存到本人安全存储中；站内自助恢复、自动周期备份和灾难切换还未实现。

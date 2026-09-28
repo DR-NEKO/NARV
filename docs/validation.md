@@ -54,3 +54,8 @@
 ## 2026-09-28：Pages 发布与 OAuth 配置
 
 GitHub Actions 测试／构建通过，启用 Pages 后重试部署成功。scripts/live-smoke.cjs 对线上网站验证 HTTP 200、API 模式配置、跨站 bootstrap、无演示角色切换、登录入口、关于页、字体和手机无横向溢出。scripts/live-auth-smoke.cjs 验证真实 API 302 到 GitHub、预期 Client ID 与回调、S256 PKCE、HttpOnly／Secure／SameSite 绑定 cookie 和 GitHub 登录页面。health 返回 authConfigured=true。完整授权回站与真实账号仍待本人登录验收。
+
+
+## 2026-09-28：真实账号与首轮业务备份
+
+远程 D1 聚合查询确认：accounts=1、original_editors=1、active_sessions=1。这证明真实 GitHub 回调、站内凭据交换及指定最高编辑身份已走通；未读取或输出会话令牌。npm run backup 的业务表导出与独立本地恢复通过，所有业务记录 JSON 完整，恢复后的登录会话为 0。备份保存在 .local/backups/，不会随 GitHub 代码或 Pages 发布。

@@ -4,13 +4,13 @@
 
 ## 当前状态
 
-已完成本地演示，以及可部署的 GitHub OAuth + Cloudflare Worker/D1 后端实现。前端已通过 API 与本机 SQLite 完成联调。**远程 D1 已迁移，Worker API 已部署；前台已发布到 https://dr-neko.github.io/NARV/；GitHub OAuth 已配置并验证跳转，完整账号登录等待本人验收。**
+已完成本地演示，以及可部署的 GitHub OAuth + Cloudflare Worker/D1 后端实现。前端已通过 API 与本机 SQLite 完成联调。**远程 D1 已迁移，Worker API 已部署；前台已发布到 https://dr-neko.github.io/NARV/；GitHub OAuth 已配置并验证跳转，真实 OAuth 交换已走通，首个账号、唯一 Original Editor 和有效登录会话已在数据库确认。**
 
 - 默认 4173 使用演示账号和浏览器本地数据。
 - 真实模式使用 API 会话、服务端权限与数据库；不显示演示账号切换。
 - 本地演示数据不会自动进入线上。
 - 自动暂存仍保留在当前设备；真实模式点击“暂存草稿”会写入服务器。
-- 上线前还有免费额度与实际负载验收、备份恢复演练、隐私和纠错渠道等事项。
+- 上线前还有免费额度与实际负载验收、隐私和纠错渠道等事项；首轮业务备份与本地恢复演练已完成。
 
 完整进度见 [产品路线图](ROADMAP.md)，资源配置见 [部署步骤](docs/deployment.md)。
 
@@ -23,6 +23,7 @@ npm ci
 npm test
 npm run dev
 npm run dev:api
+npm run backup
 npm run build
 ```
 
