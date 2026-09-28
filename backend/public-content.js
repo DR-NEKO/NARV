@@ -52,8 +52,7 @@ export async function publicResponse(request,env,ctx){
  let response=cache?await cache.match(key):null;
  if(response){response=new Response(response.body,response);response.headers.set("X-NARV-Cache","HIT");return response}
  if(readThrottle(request))return Response.json({error:"请求过于频繁，请稍后再试。"},{status:429,headers:{"Retry-After":"60","Cache-Control":"no-store"}});
- if(!inflight.has(url.href))inflight.set(url.href,readPublic(env.DB,url.pathname,url).finally(()=>inflight.delete(url.href)));
+ if(!inflight.has(url.href))inflight.set(url.href,(async()=>{const loaded=await readPublic(env.DB,url.pathname,url);if(cache&&loaded.ok){try{await cache.put(key,loaded.clone())}catch{/* Cache failures must not make public content unavailable. */}}return loaded})().finally(()=>inflight.delete(url.href)));
  response=(await inflight.get(url.href)).clone();response.headers.set("X-NARV-Cache","MISS");
- if(cache&&response.ok){const storing=cache.put(key,response.clone());if(ctx?.waitUntil)ctx.waitUntil(storing);else await storing}
  return response;
 }

@@ -89,9 +89,11 @@ export async function command(env,userId,payload){
  return {result:payload.name==="action"?submissionView(result,u):["report","claimAccountability","resolveAccountability"].includes(payload.name)?reportView(result,u):result??null,revision};
 }
 export async function scheduled(env){
- const due=await select(env.DB,"kind='submissions' AND status='scheduled' AND scheduled_at<=?",[new Date().toISOString()],{limit:10});
- for(const row of due){const before=await loadKeys(env.DB,[row.key]);const domain=engine(before.state,{scheduler:true});try{await save(env.DB,before,domain.state(),{publicize:(db,e,r)=>publicStatements(db,e,r,{apiBase:env.API_URL||""})})}catch(e){if(e.status!==409)throw e}}
- const rewards=await env.DB.prepare("SELECT article_id,supporters,bonus_awarded FROM support_totals WHERE supporters >= (bonus_awarded+1)*5 AND bonus_awarded<8 LIMIT 10").all();
+ // Free D1 allows 50 statements per invocation. Five publications in one
+ // transaction plus one eight-step support reward and cleanup use at most 49.
+ const due=await env.DB.prepare("SELECT key FROM entities WHERE kind='submissions' AND status='scheduled' AND scheduled_at<=? ORDER BY scheduled_at,key LIMIT 5").bind(new Date().toISOString()).all();
+ if(due.results.length){const before=await loadKeys(env.DB,due.results.map(r=>r.key));const domain=engine(before.state,{scheduler:true});try{await save(env.DB,before,domain.state(),{publicize:(db,e,r)=>publicStatements(db,e,r,{apiBase:env.API_URL||""})})}catch(e){if(e.status!==409)throw e}}
+ const rewards=await env.DB.prepare("SELECT s.article_id,s.supporters,s.bonus_awarded FROM support_totals s JOIN entities e ON e.key='submissions/'||s.article_id AND e.status='published' WHERE s.supporters >= (s.bonus_awarded+1)*5 AND s.bonus_awarded<8 ORDER BY s.article_id LIMIT 1").all();
  for(const row of rewards.results){
   const target=Math.min(8,Math.floor(row.supporters/5)),keys=["submissions/"+row.article_id,...Array.from({length:target},(_,i)=>"scoreEvents/publication:"+row.article_id+":bonus:"+(i+1))],before=await loadKeys(env.DB,keys),article=before.state.submissions[0];
   if(!article||article.status!=="published")continue;

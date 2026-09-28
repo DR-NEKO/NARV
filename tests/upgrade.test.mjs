@@ -86,7 +86,20 @@ test("Editor 拒稿上诉由 OE 仲裁流程，独立 Editor 复审，OE 不能�
 test("5000 公共 API 冷读合并为一次数据库读取组，不触达会话或私有表",async()=>{
  const e=await fixture();try{
  const id=await article(e);let reads=0,sqls=[];const db=e.DB,counted={...db,prepare(sql){reads++;sqls.push(sql);return db.prepare(sql)}};
- const responses=await Promise.all(Array.from({length:5000},()=>publicResponse(new Request(e.API_URL+"/api/public/articles/"+id),{...e,DB:counted})));
- assert(responses.every(r=>r.status===200));assert.equal(reads,3);assert(!sqls.some(s=>/\bauth\b|\brecords\b|\bentities\b/.test(s)));
+ let fills=0;const oldCache=globalThis.caches;globalThis.caches={default:{match:async()=>null,put:async(key,response)=>{fills++;await response.arrayBuffer()}}};let responses;
+ try{responses=await Promise.all(Array.from({length:5000},()=>publicResponse(new Request(e.API_URL+"/api/public/articles/"+id),{...e,DB:counted})))}finally{if(oldCache===undefined)delete globalThis.caches;else globalThis.caches=oldCache}
+ assert(responses.every(r=>r.status===200));assert.equal(fills,1);assert.equal(reads,3);assert(!sqls.some(s=>/\bauth\b|\brecords\b|\bentities\b/.test(s)));
+ }finally{e.DB.close()}
+});
+
+test("定时发表满批和八阶支持奖励总计不超过免费 50 条语句，已撤稿奖励不阻塞",async()=>{
+ const e=await fixture();try{
+ const id=await article(e),image="data:image/png;base64,iVBORw0KGgo=",d={...draft,content:draft.content+"\\n![配图](narv-image:img-1)",images:{"img-1":image}};
+ for(let i=0;i<5;i++){const {result:s}=await run(e,"demo-author","create",[d]);await run(e,"demo-author","action",[s.id,"submit",d]);await run(e,"demo-temp","action",[s.id,"claim"]);await run(e,"demo-temp","action",[s.id,"review",{decision:"accept",expectedVersion:1,conflictFree:true,note:"材料及图片已经核查，可发表当前版本。"}]);await run(e,"demo-author","action",[s.id,"schedule",{publishConsent:true,scheduledAt:new Date(Date.now()+3600000).toISOString()}])}
+ const before=await load(e.DB,{hydrate:false}),after=structuredClone(before.state);for(const s of after.submissions)if(s.status==="scheduled")s.scheduledAt=new Date(Date.now()-10000).toISOString();const retired=structuredClone(after.submissions.find(s=>s.id===id));Object.assign(retired,{id:"A-retired",status:"retracted",retractionNote:"测试历史撤稿"});after.submissions.push(retired);await save(e.DB,before,after);
+ await e.DB.prepare("INSERT INTO support_totals(article_id,supporters) VALUES(?,40),('A-retired',40)").bind(id).run();
+ let statements=0;const DB=e.DB,counted={...DB,prepare(sql){statements++;return DB.prepare(sql)}};
+ await scheduled({...e,DB:counted});assert.equal(statements,49);
+ assert((await load(DB)).state.submissions.filter(s=>s.id!=="A-retired").every(s=>s.status==="published"));assert.equal((await me(e,"demo-author")).points,20);
  }finally{e.DB.close()}
 });
