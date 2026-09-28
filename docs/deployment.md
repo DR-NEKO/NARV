@@ -1,6 +1,6 @@
 # 接通真实账号与后端
 
-2026-09-28。当前已经完成前后端 API 联调、SQLite 持久化、服务端权限和 GitHub OAuth 流程实现。已创建远程 D1 并迁移、部署 Cloudflare Worker；GitHub OAuth App、远程仓库和前台发布仍未完成。OAuth 回调以模拟 GitHub 响应测试；真实授权需完成下述配置后验收。
+2026-09-28。当前已经完成前后端 API 联调、SQLite 持久化、服务端权限和 GitHub OAuth 流程实现。已创建远程 D1 并迁移、部署 Cloudflare Worker；GitHub 仓库与前台已发布，OAuth Client ID／Secret 已配置；完整账号登录待本人验收。OAuth 回调以模拟 GitHub 响应测试；真实授权需完成下述配置后验收。
 
 ## 用户目前需要做什么
 
@@ -108,3 +108,13 @@ Windows 的 SQLite 数据在系统临时目录 narv-local-api 下，避免 WSL �
 后台已部署：https://narv-api.dr-neko-narv.workers.dev 。/health 实测返回 200，ok=true、authConfigured=false；等待 GitHub OAuth Client ID 与 Secret。
 
 前台计划仍为 https://dr-neko.github.io/NARV/ ，使用 GitHub Pages。workers.dev 仅承载 API，不替代前台 github.io 地址。OAuth App 的回调地址应填写 https://narv-api.dr-neko-narv.workers.dev/auth/callback 。GitHub 仓库与前台尚未发布。
+
+## 当前线上地址
+
+网站：https://dr-neko.github.io/NARV/
+
+仓库：https://github.com/DR-NEKO/NARV
+
+后台：https://narv-api.dr-neko-narv.workers.dev
+
+Client ID 已配置，Secret 只保存在 Cloudflare。2026-09-28 已确认 health 返回 authConfigured=true；实际 GitHub 登录跳转已检查通过。首次本人登录回站仍需验收。

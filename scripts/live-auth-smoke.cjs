@@ -1,0 +1,12 @@
+const {chromium}=require("C:/Users/007/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright");
+const assert=require("node:assert/strict");
+(async()=>{const browser=await chromium.launch({headless:true,proxy:{server:"http://127.0.0.1:7980"},executablePath:"C:/Program Files/Google/Chrome/Application/chrome.exe"});
+try{const context=await browser.newContext(),page=await context.newPage();
+const response=await context.request.get("https://narv-api.dr-neko-narv.workers.dev/auth/github?challenge="+"a".repeat(43),{maxRedirects:0,timeout:30000});
+assert.equal(response.status(),302);const location=new URL(response.headers().location);
+assert.equal(location.origin,"https://github.com");assert.equal(location.pathname,"/login/oauth/authorize");assert.equal(location.searchParams.get("client_id"),"Ov23li5m5pXOnwqgh433");assert.equal(location.searchParams.get("redirect_uri"),"https://narv-api.dr-neko-narv.workers.dev/auth/callback");assert.equal(location.searchParams.get("code_challenge_method"),"S256");
+const cookie=response.headers()["set-cookie"];assert(cookie.includes("HttpOnly"));assert(cookie.includes("Secure"));assert(cookie.includes("SameSite=Lax"));
+await page.goto(location.href,{waitUntil:"domcontentloaded",timeout:45000});
+const text=await page.locator("body").innerText();assert(!/application was not found|redirect_uri is not associated|invalid client/i.test(text));assert.equal(new URL(page.url()).hostname,"github.com");
+console.log("PASS: live OAuth configured, 302 to GitHub, expected Client ID/callback, S256 PKCE, secure binding cookie, GitHub login page reached. Actual user consent and token exchange still require user login.");
+}finally{await browser.close()}})().catch(e=>{console.error(e);process.exit(1)});

@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-已完成本地演示，以及可部署的 GitHub OAuth + Cloudflare Worker/D1 后端实现。前端已通过 API 与本机 SQLite 完成联调。**远程 D1 已迁移，Worker API 已部署；前台 github.io 尚未发布，真实 GitHub 授权等待 OAuth App 配置。**
+已完成本地演示，以及可部署的 GitHub OAuth + Cloudflare Worker/D1 后端实现。前端已通过 API 与本机 SQLite 完成联调。**远程 D1 已迁移，Worker API 已部署；前台已发布到 https://dr-neko.github.io/NARV/；GitHub OAuth 已配置并验证跳转，完整账号登录等待本人验收。**
 
 - 默认 4173 使用演示账号和浏览器本地数据。
 - 真实模式使用 API 会话、服务端权限与数据库；不显示演示账号切换。

@@ -49,3 +49,8 @@
 ## 2026-09-28：首次远程部署
 
 通过本机 HTTP 代理恢复 Wrangler 与 Cloudflare API 的连接；远程 D1 narv 创建并执行 0001_initial.sql 成功。narv-api 已部署并配置每分钟 cron，实际 /health 返回 HTTP 200、ok=true、authConfigured=false。真实 GitHub 授权和 github.io 前台发布尚未完成。
+
+
+## 2026-09-28：Pages 发布与 OAuth 配置
+
+GitHub Actions 测试／构建通过，启用 Pages 后重试部署成功。scripts/live-smoke.cjs 对线上网站验证 HTTP 200、API 模式配置、跨站 bootstrap、无演示角色切换、登录入口、关于页、字体和手机无横向溢出。scripts/live-auth-smoke.cjs 验证真实 API 302 到 GitHub、预期 Client ID 与回调、S256 PKCE、HttpOnly／Secure／SameSite 绑定 cookie 和 GitHub 登录页面。health 返回 authConfigured=true。完整授权回站与真实账号仍待本人登录验收。

@@ -6,7 +6,7 @@ workers_dev = true
 [vars]
 FRONTEND_URL = "https://DR-NEKO.github.io/NARV/"
 API_URL = "https://narv-api.dr-neko-narv.workers.dev"
-GITHUB_CLIENT_ID = ""
+GITHUB_CLIENT_ID = "Ov23li5m5pXOnwqgh433"
 ORIGINAL_EDITOR_GITHUB_ID = "143079338"
 
 [[d1_databases]]

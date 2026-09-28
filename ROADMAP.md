@@ -1,6 +1,6 @@
 # NARV 产品推进路线图
 
-更新：2026-09-28。当前阶段：个人中心与 API 后端已完成本地联调；D1 与 Cloudflare Worker API 已部署；真实 GitHub 授权等待 OAuth App 配置，github.io 前台尚未发布。本文区分“能演示”与“可以上线”，避免继续叠加入口而忽略流程衔接。
+更新：2026-09-28。当前阶段：个人中心与 API 后端已完成本地联调；D1 与 Cloudflare Worker API 已部署；github.io 前台已发布，GitHub OAuth 已配置并验证跳转；完整账号登录待本人验收。本文区分“能演示”与“可以上线”，避免继续叠加入口而忽略流程衔接。
 
 ## 推进方式
 
@@ -49,3 +49,7 @@ GitHub Pages 负责前端和公开内容；后端候选及需创建的资源见 
 后端仍是整体读取再裁剪的有界实现：100 账号／8 MB 业务数据门槛不等于正式容量目标。下一技术阶段优先按实体查询、版本与图片去重、数据库备份恢复、搜索索引和静态阅读页。不得继续堆叠功能后把容量门槛隐藏起来。
 
 验证结果记录在 [验证记录](docs/validation.md)。
+
+## 线上配置检查点
+
+GitHub 仓库 DR-NEKO/NARV 已创建并推送；Pages 已部署到 https://dr-neko.github.io/NARV/。GitHub OAuth Client ID 已设置，Cloudflare Secret 已就绪，线上 health 的 authConfigured=true。登录入口能够跳转 GitHub，回调地址和 S256 PKCE 参数正确。下一步是本人登录回站验收，以及后续账号与内容的小范围试运行。
