@@ -9,7 +9,7 @@ import {newSession,authRoute,hash,userFromRequest} from "../backend/auth.js";
 import worker from "../backend/worker.js";
 const draft={title:"真实后端测试",category:"科研与实践",summary:"检查服务端存储和权限隔离的完整流程。",content:"这是包含背景与依据的内容，用于检查只有作者能修改稿件、审稿人才能决定且作者负责最终发表。".repeat(3),consents:{original:true,privacy:true,policy:true,responsibility:true}};
 async function setup(){
- const env={DB:sqlite(),FRONTEND_URL:"https://example.github.io/NARV/",API_URL:"https://api.example.workers.dev",GITHUB_CLIENT_ID:"test-client",GITHUB_CLIENT_SECRET:"test-secret",ORIGINAL_EDITOR_GITHUB_ID:"123"};
+ const env={DB:sqlite(),FRONTEND_URL:"https://example.github.io/NARV/",API_URL:"https://api.example.workers.dev",GITHUB_CLIENT_ID:"test-client",GITHUB_CLIENT_SECRET:"test-secret",IDENTITY_PEPPER:"testing-identity-pepper-never-production-123",ORIGINAL_EDITOR_GITHUB_ID:"123"};
  const b=await load(env.DB);b.state.users=initialUsers.map(withIdentities);await save(env.DB,{...b,state:engine().state()},b.state);return env;
 }
 async function run(env,user,name,args){const b=await load(env.DB);return command(env,user,{name,args,revision:b.revision})}

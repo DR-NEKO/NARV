@@ -1,4 +1,6 @@
-import {load,save} from "./repository.js";
+import {loginKeyFor} from "./security.js";
+import {withIdentities} from "../public/identity.js";
+import {load,save,select,loadKeys} from "./repository.js";
 export const random=()=>{const a=crypto.getRandomValues(new Uint8Array(32));return btoa(String.fromCharCode(...a)).replaceAll("+","-").replaceAll("/","_").replaceAll("=","")};
 export const hash=async text=>{const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(text));return btoa(String.fromCharCode(...new Uint8Array(b))).replaceAll("+","-").replaceAll("/","_").replaceAll("=","")};
 async function put(db,kind,key,data,ttl){await db.prepare("INSERT INTO auth(key,kind,data,expires) VALUES(?,?,?,?)").bind(await hash(key),kind,JSON.stringify(data),Date.now()+ttl).run()}
@@ -30,14 +32,16 @@ export async function authRoute(req,env,body,fetcher=fetch) {
    const grant=await tokenResponse.json();if(!tokenResponse.ok||!grant.access_token)throw Error("GitHub 登录失败，请重试。");
    const profileResponse=await fetcher("https://api.github.com/user",{headers:{Authorization:"Bearer "+grant.access_token,Accept:"application/vnd.github+json","User-Agent":"NARV"}});
    const profile=await profileResponse.json();if(!profileResponse.ok||!Number.isSafeInteger(profile.id))throw Error("无法核验 GitHub 账号。");
-   const identityKey="github:"+profile.id;
-   let before=await load(env.DB),user=before.state.users.find(u=>u.loginKey===identityKey);
+   const identityKey=await loginKeyFor(env,profile.id);
+   let found=await select(env.DB,"kind='users' AND login_key=?",[identityKey],{limit:1});
+   if(!found.length)found=await select(env.DB,"kind='users' AND login_key=?",["github:"+profile.id],{limit:1});
+   let before=await loadKeys(env.DB,found.map(r=>r.key)),user=before.state.users[0];
+   if(user&&user.loginKey!==identityKey){const after=structuredClone(before.state);Object.assign(after.users[0],withIdentities(after.users[0]),{loginKey:identityKey});await save(env.DB,before,after);user=after.users[0]}
    if(!user){
-     if(before.state.users.length>=100)throw Error("试运行账号名额已满，请联系编辑。");
      const id=crypto.randomUUID(),a=random().slice(0,6),b=random().slice(0,6);
      const role=String(profile.id)===String(env.ORIGINAL_EDITOR_GITHUB_ID)&&!before.state.users.some(u=>u.role==="original_editor")?"original_editor":"user";
-     user={id,loginKey:identityKey,name:"读者"+a,community:{name:"读者"+a,avatar:"◈"},review:{name:"行者"+b,avatar:"◇"},role};
-     const after=structuredClone(before.state);after.users.push(user);await save(env.DB,before,after);
+     user=withIdentities({id,loginKey:identityKey,name:"读者"+a,community:{name:"读者"+a,avatar:"◈"},review:{name:"行者"+b,avatar:"◇"},role});
+     const after=structuredClone(before.state);after.users.push(user);try{await save(env.DB,before,after)}catch(error){if(error.status!==409)throw error;const existing=await select(env.DB,"kind='users' AND login_key=?",[identityKey],{limit:1});if(!existing.length)throw error;user=(await loadKeys(env.DB,[existing[0].key])).state.users[0]}
    }
    const ticket=random();await put(env.DB,"ticket",ticket,{userId:user.id,challenge:pending.challenge},60000);
    base.hash="/auth-complete?ticket="+ticket;

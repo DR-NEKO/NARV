@@ -12,7 +12,7 @@ export const initialUsers=[
 {id:"demo-editor-3",name:"编辑 · 北",role:"editor",background:"用于体验独立多人认可。"}
 ];
 export const POLICY={version:"2026-09-27.v2",reviewerReviews:5,reviewerContributions:3,appealWindowDays:90,appealCount:3,appealRatio:.5,qualityCount:3};
-export const STATUS={draft:"草稿",submitted:"待审阅",reviewing:"审稿中",revision:"待修订",accepted:"已录用 · 待作者发表",scheduled:"待定时发表",published:"已发表",rejected:"未录用",withdrawn:"已撤回",retracted:"已撤稿"};
+export const STATUS={draft:"草稿",submitted:"待审阅",reviewing:"审稿中",revision:"待修订",accepted:"已录用 · 待作者发表",scheduled:"待定时发表",published:"已发表",arbitration:"待 OE 仲裁",rejected:"未录用",withdrawn:"已撤回",retracted:"已撤稿"};
 export const CONSENTS=[
 {id:"responsibility",label:"我理解稿件仅代表本人观点，愿依法对内容与权利来源承担相应责任，已阅读并理解平台责任边界。"},
 {id:"original",label:"我确认稿件为本人原创或已获授权，引用和配图已注明必要来源。"},

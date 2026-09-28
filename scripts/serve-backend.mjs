@@ -8,7 +8,7 @@ import {sqlite} from "./sqlite-adapter.mjs";
 import {scheduled} from "../backend/service.js";
 const root=fileURLToPath(new URL("../",import.meta.url)),local=process.env.NARV_DATA_DIR||(process.platform==="win32"?path.join(os.tmpdir(),"narv-local-api"):path.join(root,".local"));await mkdir(local,{recursive:true});
 const port=Number(process.env.NARV_API_PORT||4174),origin="http://localhost:"+port;
-const env={DB:sqlite(path.join(local,"narv.sqlite")),FRONTEND_URL:origin+"/",API_URL:origin,GITHUB_CLIENT_ID:process.env.GITHUB_CLIENT_ID||"",GITHUB_CLIENT_SECRET:process.env.GITHUB_CLIENT_SECRET||"",ORIGINAL_EDITOR_GITHUB_ID:process.env.ORIGINAL_EDITOR_GITHUB_ID||""};
+const env={IDENTITY_PEPPER:process.env.IDENTITY_PEPPER||"local-only-pepper-do-not-deploy-12345678",DB:sqlite(path.join(local,"narv.sqlite")),FRONTEND_URL:origin+"/",API_URL:origin,GITHUB_CLIENT_ID:process.env.GITHUB_CLIENT_ID||"",GITHUB_CLIENT_SECRET:process.env.GITHUB_CLIENT_SECRET||"",ORIGINAL_EDITOR_GITHUB_ID:process.env.ORIGINAL_EDITOR_GITHUB_ID||""};
 const types={".html":"text/html; charset=utf-8",".css":"text/css; charset=utf-8",".js":"text/javascript; charset=utf-8",".mjs":"text/javascript; charset=utf-8",".png":"image/png",".woff2":"font/woff2"};
 http.createServer(async(req,res)=>{
  try{

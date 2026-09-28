@@ -36,3 +36,9 @@ export const toggleBookmark=(...args)=>local().toggleBookmark(...args);
 export const bookmarks=(...args)=>local().bookmarks(...args);
 export const vote=(...args)=>local().vote(...args);
 export const votes=(...args)=>local().votes(...args);
+
+export const reports=(...args)=>local().reports(...args);
+export const report=(...args)=>local().report(...args);
+export const claimAccountability=(...args)=>local().claimAccountability(...args);
+export const resolveAccountability=(...args)=>local().resolveAccountability(...args);
+export const scores=(...args)=>local().scores(...args);

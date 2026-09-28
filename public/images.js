@@ -3,7 +3,7 @@ const dataImage = /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
 const shortImage = /!\[([^\]]*)\]\(narv-image:(img-\d+)\)/g;
 const embeddedImage = /!\[([^\]]*)\]\((data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+)\)/g;
 export function validImageSource(src) {
-  return typeof src === "string" && dataImage.test(src) && src.length <= 350000;
+  return typeof src === "string" && (dataImage.test(src) && src.length <= 350000 || /^\.\/content\/media\/[a-f0-9]{64}\.(png|jpg|webp)$/.test(src) || /^https?:\/\/[a-zA-Z0-9.:-]+\/api\/public\/media\/[a-f0-9]{64}$/.test(src));
 }
 export function nextImageId(images = {}) {
   let n = 1;

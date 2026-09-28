@@ -1,0 +1,73 @@
+import {loadKeys,select,appendHeads,engine} from "./repository.js";
+import {hydrate} from "./codec.js";
+import {rank} from "../public/roles.js";
+export async function actorScope(db,userId){
+ const before=await loadKeys(db,["users/"+userId]);
+ const user=before.state.users.find(u=>u.id===userId);if(!user){const e=Error("请重新登录。");e.status=401;throw e}
+ const actual=await hydrate(db,user);Object.assign(user,actual);before.dependencies.push("users/"+userId);return before;
+}
+export async function workspaceScope(db,userId,{tab="",page=1}={}){
+ const before=await actorScope(db,userId),u=before.state.users[0],offset=(Math.max(1,page)-1)*50,add=async(where,args,limit=50)=>appendHeads(before,await select(db,where,args,{limit,offset}));
+ appendHeads(before,await select(db,"kind='submissions' AND owner_id=?",[userId],{limit:200}));
+ appendHeads(before,await select(db,"kind='submissions' AND reviewer_id=?",[userId],{limit:200}));
+ await add("kind='notifications' AND owner_id=?",[userId],50);
+ await add("kind='announcements'",[],100);
+ if(tab==="reviews"&&rank(u)>=1&&u.role!=="original_editor"){
+  await add("kind='submissions' AND ((status='submitted' AND required_rank<=? AND owner_id!=?) OR reviewer_id=?)",[rank(u),userId,userId],50);
+ }else if(tab==="comments"&&rank(u)>=1)await add("kind='comments' AND status='pending'",[],50);
+ else if(tab==="my-comments"){const rows=await select(db,"kind='comments' AND owner_id=?",[userId],{limit:50,offset});const part=await loadKeys(db,rows.map(r=>r.key));before.state.comments.push(...part.state.comments);Object.assign(before.versions,part.versions)}
+ else if(tab==="bookmarks")await add("kind='bookmarks' AND owner_id=?",[userId],50);
+ else if(tab==="reports"){await add("kind='reports' AND (owner_id=? OR required_rank<=? OR reviewer_id=? OR json_extract(head,'$.authorId')=? OR json_extract(head,'$.originalReviewerId')=?)",[userId,rank(u),userId,userId,userId],50);if(u.role==="original_editor")await add("kind='submissions' AND status='arbitration'",[],50)}
+ else if(tab==="scores")await add("kind='scoreEvents' AND owner_id=?",[userId],50);
+ else if(tab==="applications"){await add("kind='applications' AND (owner_id=? OR ? >=3)",[userId,rank(u)],50);await add("kind='users' AND key IN (SELECT 'users/'||owner_id FROM entities WHERE kind='applications' AND status='pending')",[],50)}
+ else if(tab==="members"&&rank(u)>=3){await add("kind='users'",[],50);await add("kind='accountEvents'",[],50);if(rank(u)>=4)await add("kind='identityAudits'",[],50)}
+ return before;
+}
+export async function submissionScope(db,userId,id){
+ const before=await actorScope(db,userId),part=await loadKeys(db,["submissions/"+id]);
+ if(!part.state.submissions.length){const e=Error("稿件不存在。");e.status=404;throw e}
+ const s=part.state.submissions[0];before.state.submissions.push(s);Object.assign(before.versions,part.versions);
+ appendHeads(before,await select(db,"kind='submissions' AND owner_id=?",[s.authorId],{limit:200}));
+ return before;
+}
+export async function commandScope(db,userId,name,args){
+ const before=await actorScope(db,userId),fullKeys=new Set(),thin=[];
+ const add=async(where,params,limit=50)=>{const rows=await select(db,where,params,{limit});thin.push(...rows);return rows};
+ if(name==="action"){fullKeys.add("submissions/"+args[0]);if(args[1]==="review")fullKeys.add("scoreEvents/review:"+args[0]+":"+userId);if(["publish","schedule"].includes(args[1]))fullKeys.add("scoreEvents/publication:"+args[0]+":base")}
+ if(name==="report")fullKeys.add("submissions/"+args[0]);
+ if(["claimAccountability","resolveAccountability"].includes(name))fullKeys.add("reports/"+args[0]);
+ if(name==="report")await add("kind='reports' AND owner_id=?",[userId],50);
+ if(["moderateComment","editComment","withdrawComment"].includes(name))fullKeys.add("comments/"+args[0]);
+ if(name==="endorse")fullKeys.add("applications/"+args[0]);
+ if(["promote","revealIdentity"].includes(name))fullKeys.add("users/"+args[0]);
+ if(name==="archiveAnnouncement")fullKeys.add("announcements/"+args[0]);
+ if(name==="markRead"){
+  if(args[0]==="all"){for(const r of await add("kind='notifications' AND owner_id=? AND json_extract(head,'$.read')=0",[userId],200))fullKeys.add(r.key)}
+  else fullKeys.add("notifications/"+args[0]);
+ }
+ if(["toggleBookmark","vote","addComment"].includes(name)){
+  fullKeys.add("submissions/"+args[0]);fullKeys.add("bookmarks/"+userId+":"+args[0]);fullKeys.add("votes/"+userId+":"+args[0]);
+ }
+ if(name==="apply")await add("kind='applications' AND owner_id=?",[userId]);
+
+ const selected=await loadKeys(db,[...fullKeys]);
+ for(const [kind,items] of Object.entries(selected.state))if(Array.isArray(items))before.state[kind].push(...items.filter(v=>!before.state[kind].some(x=>(x.id||x.userId+":"+x.articleId)===(v.id||v.userId+":"+v.articleId))));
+ Object.assign(before.versions,selected.versions);
+ for(const s of before.state.submissions){if(s.authorId)fullKeys.add("users/"+s.authorId);if(s.reviewerId)fullKeys.add("users/"+s.reviewerId)}
+ for(const c of before.state.comments){fullKeys.add("users/"+c.authorId);fullKeys.add("submissions/"+c.articleId)}
+ for(const a of before.state.applications)fullKeys.add("users/"+a.userId);
+ for(const r of before.state.reports){fullKeys.add("submissions/"+r.articleId);fullKeys.add("users/"+r.originalReviewerId);fullKeys.add("scoreEvents/penalty:"+r.articleId+":v"+r.reportedVersion)}
+ if(["vote","toggleBookmark"].includes(name))before.dependencies.push("votes/"+userId+":"+args[0],"bookmarks/"+userId+":"+args[0]);
+ if(name==="promote")for(const row of await add("kind='submissions' AND reviewer_id=?",[args[0]],100))fullKeys.add(row.key);
+ if(["action","apply","promote","endorse"].includes(name))await add("kind='users' AND role!='user'",[],10);
+ if(name==="endorse"){const target=before.state.applications.find(x=>x.id===args[0])?.userId;if(target)await add("kind='submissions' AND (owner_id=? OR EXISTS(SELECT 1 FROM json_each(json_extract(head,'$.reviews')) WHERE json_extract(value,'$.reviewerId')=?))",[target,target],200)}
+ thin.push(...await select(db,"kind='users' AND role='original_editor'",[],{limit:1}));
+ const dependencies=await loadKeys(db,[...fullKeys]);
+ for(const [kind,items] of Object.entries(dependencies.state))if(Array.isArray(items))for(const item of items){const i=before.state[kind].findIndex(x=>(x.id||x.userId+":"+x.articleId)===(item.id||item.userId+":"+item.articleId));if(i<0)before.state[kind].push(item);else if(before.readOnly.has(kind+"/"+item.id))before.state[kind][i]=item}
+ Object.assign(before.versions,dependencies.versions);
+ appendHeads(before,thin);
+ return before;
+}
+export function thinSnapshotSubmissions(data){
+ return {...data,submissions:data.submissions.map(s=>({...s,content:"",images:{},workingDraft:undefined,versions:s.versions.map(v=>({version:v.version,title:v.title,date:v.date}))}))};
+}

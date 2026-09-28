@@ -59,3 +59,14 @@ GitHub Actions 测试／构建通过，启用 Pages 后重试部署成功。scri
 ## 2026-09-28：真实账号与首轮业务备份
 
 远程 D1 聚合查询确认：accounts=1、original_editors=1、active_sessions=1。这证明真实 GitHub 回调、站内凭据交换及指定最高编辑身份已走通；未读取或输出会话令牌。npm run backup 的业务表导出与独立本地恢复通过，所有业务记录 JSON 完整，恢复后的登录会话为 0。备份保存在 .local/backups/，不会随 GitHub 代码或 Pages 发布。
+
+## 2026-09-28：容量、隐私与举报治理升级
+
+- npm test：43/43 通过；新增同名昵称／独立持久 UID／30 天冷却、独立写并发与同记录冲突、图片去重和压缩恢复、举报权限／回避／一次处罚／作者通知、积分防刷、OE 仲裁、5,000 冷读合并。
+- scripts/browser-check.cjs：完整本地演示流程通过。
+- scripts/backend-browser-check.cjs：真实 SQLite API 投稿／帖子／收藏／评论退回重提公开撤回／草稿／举报复核扣分／头像上传与手机布局通过；独立测试数据，不写生产。
+- 实际 workerd + 本地 D1 0001/0002、CORS、匿名写拒绝和 cron 验证通过；Wrangler dry-run 编译成功。
+- Grafana k6 v2.3.0 官方二进制验证 SHA-256，5,000 VUs，31,743 请求，0 失败，P95 2.57ms／P99 4.25ms。本机静态 HTTP 源，不代表云端 SLA；完整指标和较慢冷连接结果保存在忽略的 artifacts。
+- 远程 0002 迁移通过；业务停写维护期间新鲜快照、本地转换／重建再上传，保留账号内部 ID 和 auth；新 HMAC 绑定／双 UID 已验证，旧 GitHub 明文登录索引已移除。
+- 升级前备份与升级后所有业务表备份／压缩 JSON／附件引用／索引的独立本机恢复通过。会话不入备份，不进入 GitHub／Pages。
+- 后端正常版本 b9e932c8-f347-4f41-b679-fb8cdeb329e6；Pages 构建导出公开目录成功。隐私密钥存 Cloudflare Secret，本机副本权限 600；没有输出密钥。

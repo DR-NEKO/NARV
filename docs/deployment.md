@@ -1,126 +1,71 @@
-# 接通真实账号与后端
+# NARV 部署与恢复
 
-2026-09-28。当前已经完成前后端 API 联调、SQLite 持久化、服务端权限和 GitHub OAuth 流程实现。已创建远程 D1 并迁移、部署 Cloudflare Worker；GitHub 仓库与前台已发布，OAuth Client ID／Secret 已配置；后台已确认首个真实账号、唯一 Original Editor 和有效登录会话。OAuth 回调以模拟 GitHub 响应测试；真实授权需完成下述配置后验收。
+更新：2026-09-28，本轮容量／治理升级已部署后端，前端由 main 的 Pages 工作流发布。
 
-## 用户目前需要做什么
+- 网站：https://dr-neko.github.io/NARV/
+- API：https://narv-api.dr-neko-narv.workers.dev
+- 仓库：https://github.com/DR-NEKO/NARV
+- GitHub Pages 承载界面和公开文章／评论／搜索／媒体文件；Workers + D1 承载私有账号、稿件与治理。
+- 当前采用免费计划，没有自建服务器、付费域名、R2 或付费审核服务。
 
-1. 在 https://dash.cloudflare.com/sign-up 注册免费账号，完成邮箱验证。保持 Workers Free，不开通付费计划，无需购买域名或对象存储。
-2. 用 GitHub 账号创建仓库，例如 DR-NEKO/NARV。这里的名字只是建议；当前连接账号的 numeric ID 为 143079338，已填入最高编辑的部署配置。仓库名字变更时同步修改站点路径。
-3. 在终端执行 npx wrangler login，浏览器授权给本人 Cloudflare 账号。这一步需要本人操作。
-4. 后续 OAuth Client Secret 通过终端的 secret 提示输入，不要发送到聊天、不要写入公开文件。
+## 常规更新
 
-GitHub Pages 可以直接用 github.io。免费后端选用 Worker + D1；当前少量压缩配图也保存在受权限检查的 D1 稿件记录中，没有 R2 费用。前端构建只复制 public/，不会上传数据库、后台 Secret 或草稿。
+在仓库根目录执行：
 
-## 创建并部署后端
-
-先在项目根目录执行 npm ci，然后：
-
-```sh
-npx wrangler login
-npx wrangler d1 create narv
-```
-
-将返回的 database_id 填入 backend/wrangler.toml。确认 FRONTEND_URL 包含正确的 GitHub Pages 仓库路径。API_URL 填入本人 Worker 的 HTTPS 地址。
-
-```sh
+~~~sh
+npm ci
+npm test
 npm run db:migrate
 npm run deploy:api
-```
+~~~
 
-第一次部署可以暂不配置 OAuth，此时 /health 的 authConfigured 为 false。部署成功后确认 API_URL 与实际地址一致，重新部署。
+推送 main 后，GitHub Actions 测试／构建／发布 Pages；另有每 15 分钟的定时构建，GitHub 调度可能延迟，不能保证严格 15 分钟内同步。仓库 variable NARV_API_URL 为 API HTTPS origin。公开静态内容包只从白名单只读接口导出，不导出账号、草稿、未公开评论或审稿记录。匿名常规阅读／检索无 Worker 请求；尚未同步的新文章直接链接可从公共 API 回退读取。登录读者获取实时互动状态。
 
-然后在 https://github.com/settings/developers 创建 OAuth App：
-- Homepage URL：实际的 GitHub Pages 首页。
-- Authorization callback URL：实际 API 地址 + /auth/callback。
-- Client ID 填入 backend/wrangler.toml 的 GITHUB_CLIENT_ID。
-- Client Secret 通过以下命令输入：
+首次新部署需要本人 Cloudflare 免费账号、D1 和 GitHub OAuth App。wrangler.toml 配置公开 Client ID、指定 OE GitHub numeric ID、FRONTEND_URL、API_URL；Secret 用官方 CLI 设置，不发送聊天：
 
-```sh
+~~~sh
 npx wrangler secret put GITHUB_CLIENT_SECRET --config backend/wrangler.toml
-npm run deploy:api
-```
+node scripts/set-identity-secret.mjs
+~~~
 
-Original Editor 仅由配置中的 GitHub numeric ID 在首次注册时获得，不采用“第一个访问者就是管理员”。不使用 GitHub 昵称、邮箱、头像做公开署名，登录后在“双身份设置”中配置。
+OAuth 回调 URL 是 API /auth/callback。IDENTITY_PEPPER 用来 HMAC GitHub 登录绑定；保留 .local/identity-pepper 的私有安全副本，恢复时必须使用相同值。普通代码部署不要重置或旋转这个密钥。身份关联查询只返回站内两套身份，不返回 GitHub 标识、头像、邮箱或令牌；Editor 及以上查询需要理由并审计／通知。
 
-## 发布前端
+## 存储／安全界限
 
-提交到选定的 GitHub 仓库，在 Settings → Pages 中选择 GitHub Actions。设置仓库 Actions variable：
+- 独立记录索引、按用户／页面／稿件读取；版本和图片按需获取。
+- 文本 gzip，图片 SHA-256 去重。未引用私有 blob 超过一天后清理；公开引用保留。
+- 每账号最多 200 篇保留稿件；每请求 1.6 MB；每次事务最多 48 条语句。
+- 不再有 100 账号／8 MB 的旧试运行门槛。压缩记录＋blob 业务容量主动限制 300 MiB，留出索引、公共投影、会话和数据库开销；不等于 D1 文件尺寸的精确上限。
+- 记录级乐观锁＋事务／唯一约束；不同用户独立写互不因全站版本号冲突，同稿过期操作返回 409。
+- 账号写接口每分钟 30 次；OAuth／匿名写入口每 IP 每分钟 300 次；公共缓存未命中读取有 isolate 内的宽松限流（校园 NAT 下每 IP 6000/min）。它不是分布式 WAF，不能保证挡住换 IP 抓取。
+- API 无搜索引擎索引、安全响应头、规范缓存 URL。公开内容仍能被访问者复制／抓取，站点不能承诺绝对反爬。
+- 会话 12 小时，仅浏览器 sessionStorage；服务器存哈希。GitHub access token 仅用于核验后丢弃。
+- 定时发表和支持积分奖励每分钟处理；发布奖励 +2，每稿同一审稿人 +1，支持奖励只追加到新高，总额上限 10。积分不自动提权。
+- OE 不做普通审稿。Editor 拒稿上诉由 OE 流程仲裁，再安排独立 Editor。
+- 免费额度及容量验收见 capacity-plan.md、open-source-performance.md。不能保证 5,000 人持续高频读写免费无限运行。
 
-```text
-NARV_API_URL=https://实际的-worker.workers.dev
-```
+## 业务备份与恢复演练
 
-Pages 工作流会把此地址写入构建目录的 config.js，并启用真实 API 模式与 CSP。未提供该变量时构建仍是本地演示模式，不能当作真实服务发布给投稿者。
+~~~sh
+npm run backup
+~~~
 
-线上模式不会显示演示账号切换，也不把本地演示数据导入线上。收藏、评论、稿件、权限与消息都从 API 读取；本机自动暂存独立隔离，点击“暂存草稿”会写入服务端。
+导出 records、revision、索引实体、blob、引用、公共投影、积分／支持／投票计数。脚本在一个全新的本机数据库恢复、解压 JSON、验证附件引用；不导出 auth 或 rate_limits。备份 SQL、恢复数据库及报告位于被忽略的 .local/backups/，权限 600，不进入 GitHub／Pages。恢复后用户重新登录。没有站内一键恢复；真实恢复要先维护停写，并使用同一 HMAC 密钥。
 
-## 上线前的实际验收
+旧 v1 → v2 的一次性升级：
+1. 备份；db:migrate 应用 0002。
+2. 部署 --var MAINTENANCE:1 的后端，暂停私有操作及 cron，保留 auth。
+3. node scripts/migrate-storage.mjs 导出新鲜业务快照、本地转换与重建索引、检查版本后上传，保留内部账号 ID 和会话。
+4. 常规部署清除维护标志，再检查聚合账号／OE／会话数量和公开接口。
 
-- 从真实 GitHub 授权回站，确认最高编辑与第二个普通账号的权限；退出后旧会话无效。
-- 分别检查手机／校园网访问、浏览器第三方 cookie 限制下的登录，以及回调过期后的重新登录。
-- 使用不同真实账号完成投稿、审稿、退修、录用、发表、评论审核、收藏与身份查询。
-- 关闭浏览器后确认后台定时发表；配置 cron 是每分钟一次，不承诺秒级准点。
-- 确认公开 bootstrap 没有草稿、待审核评论、内部主体 ID、GitHub 标识和身份映射。
-- 在 Cloudflare 运行日志检查 CPU、错误率与额度；通过实际负载验收后才开放征稿。
-- 完成有效平台联系方式、纠错渠道、隐私保留与用户数据处理说明。
+升级脚本不用于日常部署，也不能在正常写入期间运行。本机代理环境的 workerd 远程绑定受 restrictPeers 限制，因此迁移走 Wrangler 官方 HTTPS CLI，并先本地转换验证，不读取或输出 Cloudflare 认证令牌。
 
-## 已实现的边界
+## 本机网络和测试
 
-- GitHub OAuth 使用 state、HttpOnly/Secure/SameSite=Lax 绑定 cookie 和 S256 PKCE；前端还使用独立 PKCE 交换单次 60 秒 ticket。GitHub access token 仅用于核验账号，不持久化。
-- NARV 会话有效期 12 小时，只在 sessionStorage 中保存；数据库保存其哈希。GitHub Pages 与 workers.dev 不依赖跨站第三方会话 cookie。
-- 每次写操作按数据库中当前账号权限执行；快照返回字段经过裁剪。身份对应关系仍必须提交理由才能查询，并记录审计和通知。
-- D1 使用事务和全局修订号防止并发覆盖。发生冲突返回 409，刷新后重新操作，不静默覆盖他人修改。
-- 内容以独立记录和分块存储，避免单行超过 D1 限制。当前试运行实现仍会整体读取数据再裁剪，不适合大规模使用。
-- 当前硬限制：100 个账号、每账号 50 篇稿件、全站业务数据 8 MB、每次请求 1.6 MB、单次写入最多 40 条语句；每账号每分钟 30 次写操作。全站 8 MB 是主动试运行门槛，远低于 D1 服务额度。
-- 达到限制明确失败，不会自动升级为付费。全站读取、附件版本占用、配额提示、索引分页和分表查询仍需要后续优化。
-- 对外开放前需要完成备份恢复演练；目前可用 wrangler d1 export 做管理员数据库备份，尚未提供站内自助恢复界面。
+WSL 使用 HTTPS_PROXY=http://127.0.0.1:7980；CLI 需要显式传递进程环境。不要关闭 TLS 校验。直接 Node fetch 构建使用：
 
-## 本地开发与验证
+~~~sh
+HTTPS_PROXY=http://127.0.0.1:7980 NARV_API_URL=https://narv-api.dr-neko-narv.workers.dev node --use-env-proxy scripts/build.mjs
+~~~
 
-```sh
-npm test
-npm run dev
-npm run dev:api
-npx wrangler deploy --dry-run --config backend/wrangler.toml
-```
-
-4173 是原有浏览器本地演示；4174 是相同 Worker 逻辑 + 本机 SQLite 的联调入口。4174 不包含登录后门或可切换演示身份；真实 OAuth 需要配置 HTTPS 回调。自动浏览器验收使用独立临时数据库、独立会话和 4175 端口，测试进程退出后关闭服务。
-
-Windows 的 SQLite 数据在系统临时目录 narv-local-api 下，避免 WSL 网络路径文件锁问题；WSL 下为项目 .local/。可用 NARV_DATA_DIR 指定持久目录。该本地目录不是正式生产数据库。
-
-## 核实依据
-
-- [GitHub OAuth 与 PKCE](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps)
-- [D1 batch 事务](https://developers.cloudflare.com/d1/worker-api/d1-database/)
-- [D1 限制](https://developers.cloudflare.com/d1/platform/limits/)
-- [Workers 计费与免费计划](https://developers.cloudflare.com/workers/platform/pricing/)
-
-以上是实现和本地验证记录，不能替代尚未进行的真实 Cloudflare 部署、GitHub 授权和免费计划负载验收。
-
-## WSL 网络排障（2026-09-28）
-
-本机 Windows 代理监听 127.0.0.1:7980；WSL 直连 Cloudflare API 超时。项目根目录及 backend/.env 已设置 HTTPS_PROXY=http://127.0.0.1:7980，两个本机配置均被 .gitignore 排除。更换代理端口后需更新这两处配置；无需关闭 TLS 校验。
-
-可临时验证：HTTPS_PROXY=http://127.0.0.1:7980 npx wrangler d1 list。D1 narv 已在本人 Cloudflare 账号创建并绑定到 backend/wrangler.toml。
-
-## 线上进度与地址分工
-
-后台已部署：https://narv-api.dr-neko-narv.workers.dev 。/health 实测返回 200，ok=true、authConfigured=false；等待 GitHub OAuth Client ID 与 Secret。
-
-前台计划仍为 https://dr-neko.github.io/NARV/ ，使用 GitHub Pages。workers.dev 仅承载 API，不替代前台 github.io 地址。OAuth App 的回调地址应填写 https://narv-api.dr-neko-narv.workers.dev/auth/callback 。GitHub 仓库与前台尚未发布。
-
-## 当前线上地址
-
-网站：https://dr-neko.github.io/NARV/
-
-仓库：https://github.com/DR-NEKO/NARV
-
-后台：https://narv-api.dr-neko-narv.workers.dev
-
-Client ID 已配置，Secret 只保存在 Cloudflare。2026-09-28 已确认 health 返回 authConfigured=true；实际 GitHub 登录跳转已检查通过。首次本人登录回站仍需验收。
-
-## 管理员备份
-
-在项目目录执行 npm run backup。仅导出 records 与 revision，保存于被 Git 忽略的 .local/backups/，文件权限为 600。命令会在新建的本地 SQLite 中恢复业务记录、检查完整 JSON，并确认没有登录会话。恢复演练不修改线上数据库。D1 导出期间可能短暂暂停查询，建议选择低使用时段。
-
-2026-09-28 首轮导出与本地恢复通过。后续需把业务备份另存到本人安全存储中；站内自助恢复、自动周期备份和灾难切换还未实现。
+4173 是本地演示，4174 是 Worker 逻辑＋SQLite 联调。浏览器验收使用独立 4175 和临时数据库／测试会话；不替换生产数据。Windows SQLite 数据放系统 temp，避免 UNC 文件锁。实际 workerd + D1 本地迁移／权限／cron 另有 runtime check。k6 本机负载脚本禁止指向公开云端，避免消耗生产免费额度。
