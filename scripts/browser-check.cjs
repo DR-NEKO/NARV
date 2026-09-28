@@ -3,7 +3,7 @@ const{chromium}=require(process.env.NARV_PLAYWRIGHT||"C:/Users/007/.cache/codex-
 const shot=async name=>{await page.evaluate(()=>document.fonts.ready);await page.screenshot({path:path.join(dir,name+".png"),fullPage:true})};
 const go=async route=>{await page.goto(root+"/#/"+route);await page.locator("main h1").first().waitFor()};
 const role=async id=>{await page.locator("[data-action=switch-role]").click();await page.locator('[data-account="'+id+'"]').click();await page.locator(".workspace-tabs").waitFor()};
-await page.goto(root);await page.getByRole("heading",{name:"文章"}).waitFor();await shot("home-desktop");
+await page.goto(root);await page.getByRole("heading",{name:"文章",exact:true}).waitFor();await shot("home-desktop");
 assert((await page.locator(".featured h2").evaluate(e=>getComputedStyle(e).fontFamily)).includes("Noto Serif"));
 await go("search?q="+encodeURIComponent("交查验证"));await page.locator(".search-result").first().waitFor();assert((await page.locator(".search-result").first().innerText()).includes("评论"));await shot("search-desktop");
 await page.locator(".search-result h2 a").first().click();await page.locator(".reply.targeted").waitFor();
