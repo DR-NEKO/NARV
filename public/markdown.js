@@ -59,7 +59,7 @@ md.renderer.rules.image=(tokens,i,options,env,self)=>{
  if(!imageAllowed(src))return escape("[图片地址不受支持："+caption+"]");
  return '<img src="'+escape(src)+'" alt="'+escape(caption)+'" loading="lazy" decoding="async" referrerpolicy="no-referrer"'+(env.annotatable&&!image.meta?.figure?' class="review-atom" data-review-text="'+escape(caption)+'"':"")+'>'+(image.meta?.figure&&caption?'<figcaption>'+escape(caption)+'</figcaption>':"");
 };
-md.renderer.rules.table_open=()=>'<div class="markdown-table" role="region" aria-label="数据表格" tabindex="0"><table>\n';
+md.renderer.rules.table_open=(tokens,i)=>'<div class="markdown-table '+escape(tokens[i].meta?.diffClass||"")+'" role="region" aria-label="数据表格" tabindex="0"><table>\n';
 md.renderer.rules.table_close=()=>'</table></div>\n';
 function inlineText(children=[]){return children.map(t=>{
  if(["text","code_inline","narv_math_inline"].includes(t.type))return t.content;
@@ -85,7 +85,7 @@ function collectBlocks(tokens){
  return result;
 }
 const fenceRender=md.renderer.rules.fence,codeRender=md.renderer.rules.code_block;
-const attrs=token=>token.meta?.reviewBlock?' data-review-block="'+escape(token.meta.reviewBlock)+'"':"";
+const attrs=token=>(token.meta?.reviewBlock?' data-review-block="'+escape(token.meta.reviewBlock)+'"':"")+(token.meta?.diffClass?' class="'+escape(token.meta.diffClass)+'"':"");
 md.renderer.rules.fence=(tokens,i,options,env,self)=>{const html=fenceRender(tokens,i,options,env,self);return attrs(tokens[i])?'<div'+attrs(tokens[i])+'>'+html+'</div>':html};
 md.renderer.rules.code_block=(tokens,i,options,env,self)=>{const html=codeRender(tokens,i,options,env,self);return attrs(tokens[i])?'<div'+attrs(tokens[i])+'>'+html+'</div>':html};
 const mathBlockRender=md.renderer.rules.narv_math_block;
@@ -94,7 +94,8 @@ md.core.ruler.push("narv_structure",state=>{
  let index=0;
  for(let i=0;i<state.tokens.length;i++){
   const t=state.tokens[i];
-  if(t.type==="heading_open"){t.attrSet("id","section-"+index++);t.attrSet("class","md-heading md-h"+t.tag.slice(1))}
+  if(t.map&&state.env.diffRanges?.some(([a,b])=>t.map[0]<b&&t.map[1]>a)){t.attrJoin("class",state.env.diffClass||"diff-added-block");t.meta={...t.meta,diffClass:state.env.diffClass||"diff-added-block"}}
+  if(t.type==="heading_open"){t.attrSet("id","section-"+index++);t.attrJoin("class","md-heading md-h"+t.tag.slice(1))}
   if(t.type==="paragraph_open"&&state.tokens[i+1]?.type==="inline"){
    const children=state.tokens[i+1].children;
    if(children?.length===1&&children[0].type==="image"&&imageAllowed(imageSource(children[0].attrGet("src")||"",state.env))){
@@ -115,3 +116,21 @@ export function markdownHeadings(source){
  return entries;
 }
 export function reviewBlocks(source){return collectBlocks(md.parse(String(source||""),{})).map(({index,...b})=>b)}
+
+// Presentation-only deduplication. Never mutate the submitted/published source.
+export function articleReadingSource(source,title,author){
+ source=String(source||"");const tokens=md.parse(source,{}),rows=source.split("\n");
+ const norm=s=>String(s||"").normalize("NFKC").replace(/\s+/g,"").trim();
+ let cursor=0,removeUntil=0;
+ if(tokens[0]?.type==="heading_open"&&tokens[0].tag==="h1"&&norm(inlineText(tokens[1].children))===norm(title)){
+  removeUntil=tokens[0].map[1];cursor=3;
+ }
+ if(tokens[cursor]?.type==="paragraph_open"){
+  const text=inlineText(tokens[cursor+1]?.children).trim(),match=text.match(/^作者\s*[:：]\s*(.+)$/);
+  if(match&&norm(match[1])===norm(author)){
+   removeUntil=tokens[cursor].map[1];cursor+=3;
+   if(tokens[cursor]?.type==="hr")removeUntil=tokens[cursor].map[1];
+  }
+ }
+ return removeUntil?rows.slice(removeUntil).join("\n").replace(/^\s*\n/,""):source;
+}

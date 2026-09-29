@@ -1,9 +1,10 @@
+import {replyUI} from "./review-replies-ui.js";
 import * as db from "./client.js";
 import {canReview} from "./workflow.js";
 import {reviewBlocks} from "./markdown.js";
 import {esc,markdown,toast,when} from "./ui.js";
 let key="",selected=null,pending=null,note="",editing="",dialog=null;
-const current=()=>{const id=location.hash.match(/^#\/submission\/([^/?]+)/)?.[1];return id?db.get(id,db.session()):null};
+const current=()=>{const id=location.hash.match(/^#\/(?:submission|edit)\/([^/?]+)/)?.[1];return id?db.get(id,db.session()):null};
 const editable=s=>s?.status==="reviewing"&&s.reviewerId===db.session()?.id&&canReview(s,db.session());
 function reset(){selected=pending=null;note="";editing="";document.querySelector(".review-selection-action")?.remove()}
 export function assertAnnotationsSaved(){if(pending)throw Error("请先保存或取消正在编辑的批注，再提交审稿决定。")}
@@ -14,8 +15,8 @@ export function annotationPanel(s,u){
  return '<section class="review-annotations panel mt"><div class="row-top"><h2>原文批注 <span class="count">'+rows.length+'</span></h2><button class="btn" type="button" data-add-annotation>选中原文后添加批注</button></div><p class="small-print">第 '+s.version+' 版 · 第 '+s.round+' 轮。批注草稿仅你可见，提交审稿决定时一起发送给作者。按原文片段定位，不使用屏幕行号。</p><div id="annotation-editor">'+editorUI()+'</div><div class="annotation-list">'+(rows.length?rows.map(a=>card(s.id,a,true)).join(""):'<p class="small-print">尚无批注。可在上方正文中选中一段文字，再添加意见。</p>')+'</div>'+(older.length?'<details class="annotation-older"><summary>其他版本／轮次的私密批注草稿（'+older.length+'）</summary>'+older.map(a=>card(s.id,a,false)).join("")+'<p class="small-print">这些批注仍绑定原版本，不会随本轮决定发送。</p></details>':'')+'</section>';
 }
 function card(id,a,edit=false){return '<article class="annotation-card" data-annotation="'+esc(a.id)+'"><div class="row-top"><span class="small-print">第 '+a.version+' 版 · 第 '+a.round+' 轮</span><button class="text-link" type="button" data-locate-annotation="'+esc(a.id)+'" data-manuscript="'+id+'">定位原文</button></div><blockquote>'+esc(a.anchor.quote)+'</blockquote><p class="annotation-note">'+esc(a.note)+'</p>'+(edit?'<div class="form-actions"><button class="text-link" type="button" data-edit-annotation="'+a.id+'">修改批注</button><button class="text-link danger" type="button" data-delete-annotation="'+a.id+'">删除批注</button></div>':'')+'</article>'}
-export const finalAnnotationList=(id,review)=>review.annotations?.length?'<section class="final-annotations"><h4>原文批注（'+review.annotations.length+'）</h4>'+review.annotations.map(a=>card(id,a)).join("")+'</section>':"";
-function editorUI(){return pending?'<form id="review-annotation-form"><label class="form-field"><span>选中的原文</span><blockquote class="annotation-quote">'+esc(pending.quote)+'</blockquote></label><label class="form-field"><span>批注意见</span><textarea name="annotationNote" rows="4" minlength="5" maxlength="2000" required>'+esc(note)+'</textarea></label><div class="field-error" id="annotation-error" role="alert"></div><div class="form-actions"><button class="btn primary" type="submit">保存批注草稿</button><button class="btn" type="button" data-cancel-annotation>取消</button></div></form>':""}
+export const finalAnnotationList=(id,review,s,u)=>review.annotations?.length?'<section class="final-annotations"><h4>原文批注（'+review.annotations.length+'）</h4>'+review.annotations.map(a=>card(id,a)+(s?replyUI(s,review,a.id,u):"")).join("")+'</section>':"";
+function editorUI(){return pending?'<form id="review-annotation-form"><label class="form-field"><span>选中的原文</span><blockquote class="annotation-quote">'+esc(pending.quote)+'</blockquote></label><label class="form-field"><span>批注意见</span><textarea name="annotationNote" rows="4" maxlength="2000">'+esc(note)+'</textarea></label><div class="field-error" id="annotation-error" role="alert"></div><div class="form-actions"><button class="btn primary" type="submit">保存批注草稿</button><button class="btn" type="button" data-locate-pending>定位原文</button><button class="btn" type="button" data-cancel-annotation>取消</button></div></form>':""}
 function editorRender(){const slot=document.querySelector("#annotation-editor");if(slot)slot.innerHTML=editorUI()}
 function plain(node){
  if(node.nodeType===3)return node.textContent;
@@ -59,7 +60,7 @@ function locate(root,annotation){
  if(a&&b){const range=document.createRange();range.setStart(...a);range.setEnd(...b);window.getSelection().removeAllRanges();window.getSelection().addRange(range)}
 }
 async function locateAnnotation(s,a){
- if(a.version===s.version){locate(document.querySelector("#submission-body"),a);return}
+ if(a.version===s.version&&document.querySelector("#submission-body")){locate(document.querySelector("#submission-body"),a);return}
  const version=await db.version(s.id,a.version,db.session());
  dialog?.remove();dialog=document.createElement("dialog");dialog.className="review-version-dialog";
  dialog.innerHTML='<div class="row-top"><h2>第 '+a.version+' 版原文</h2><button class="btn" type="button" data-close-annotation-version>关闭</button></div><div class="notice">批注绑定的是这个提交版本，未自动移动到修改后的正文。</div><div class="prose">'+markdown(version.content,version.images,{annotatable:true})+'</div>';
@@ -69,9 +70,10 @@ document.addEventListener("mouseup",capture);document.addEventListener("touchend
 document.addEventListener("input",e=>{if(e.target.name==="annotationNote")note=e.target.value});
 document.addEventListener("click",async e=>{
  try{
-  const button=e.target.closest("[data-annotate-block],[data-add-annotation],[data-edit-annotation],[data-delete-annotation],[data-locate-annotation],[data-cancel-annotation],[data-close-annotation-version]");if(!button)return;
+  const button=e.target.closest("[data-annotate-block],[data-add-annotation],[data-edit-annotation],[data-delete-annotation],[data-locate-annotation],[data-cancel-annotation],[data-close-annotation-version],[data-locate-pending]");if(!button)return;
   if(button.hasAttribute("data-close-annotation-version")){dialog?.remove();dialog=null;return}
   const s=current();if(!s)return;
+  if(button.hasAttribute("data-locate-pending")){if(pending)locate(document.querySelector("#submission-body"),{anchor:pending});return}
   if(button.hasAttribute("data-cancel-annotation")){reset();editorRender();return}
   if(button.hasAttribute("data-locate-annotation")){const a=findAnnotation(s,button.dataset.locateAnnotation);if(a)await locateAnnotation(s,a);return}
   if(!editable(s))throw Error("当前稿件已不属于你正在审阅的版本。");
@@ -101,8 +103,9 @@ export function installAnnotationButtons(s){
  const root=document.querySelector("#submission-body");if(!root)return;
  for(const block of root.querySelectorAll("[data-review-block]")){
   block.classList.add("review-annotatable-block");const button=document.createElement("button");
-  button.type="button";button.className="review-block-button";button.dataset.annotateBlock=block.dataset.reviewBlock;button.dataset.reviewIgnore="";button.setAttribute("aria-label","为整段原文添加批注");button.title="批注整段";button.textContent="＋";block.append(button);
+  button.type="button";button.className="review-block-button";button.dataset.annotateBlock=block.dataset.reviewBlock;button.dataset.reviewIgnore="";button.setAttribute("aria-label","为整段原文添加批注");button.title="批注整段";button.textContent="＋";if(!block.querySelector(".review-block-button"))block.append(button);
  }
 }
 
+document.addEventListener("narv:comparison-rendered",()=>{const s=current();if(s)installAnnotationButtons(s)});
 window.addEventListener("hashchange",()=>{selected=null;document.querySelector(".review-selection-action")?.remove()});

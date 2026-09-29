@@ -11,7 +11,7 @@ import {canView} from "../public/workflow.js";
 export const publicComment=c=>({id:c.id,articleId:c.articleId,author:c.author,avatar:c.avatar,content:c.content,status:c.status,createdAt:c.createdAt,updatedAt:c.updatedAt});
 function member(u,actor){return u.id===actor?.id?{id:u.id,name:face(u).name,role:u.role,community:face(u),review:face(u,"review"),suspension:u.suspension||null,accountStatus:u.accountStatus||"active"}:{id:u.id,name:face(u,"review").name,role:u.role,review:face(u,"review"),community:{name:"身份受限",avatar:"◇"},suspension:u.suspension||null,accountStatus:u.accountStatus||"active"}}
 export function submissionView(s,u){
- const item=structuredClone(s);item.reviewAnnotations=(item.reviewAnnotations||[]).filter(a=>a.reviewerId===u?.id);if(s.authorId===u?.id)return item;
+ const item=structuredClone(s);item.reviewAnnotations=(item.reviewAnnotations||[]).filter(a=>a.reviewerId===u?.id);if(s.authorId===u?.id)return item;delete item.reviewReplyDrafts;
  delete item.workingDraft;
  const opaque="author:"+s.id;
  function mask(value){if(value===s.authorId)return opaque;if(Array.isArray(value))return value.map(mask);if(value&&typeof value==="object")return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,mask(v)]));return value}
@@ -62,7 +62,7 @@ async function views(env,before,userId,{thin=true}={}){
  for(const t of memberScores.results){data.metrics[t.user_id]||={};data.metrics[t.user_id].points=t.points}
  data.recordVersions=Object.fromEntries(Object.entries(before.versions).filter(([key])=>!key.startsWith("users/")||key==="users/"+userId));
  for(const t of totals.results)data.voteTotals[t.article_id]={up:t.up,down:t.down,mine:before.state.votes.find(v=>v.articleId===t.article_id&&v.userId===userId)?.value||0};
- if(thin)data.submissions=data.submissions.map(s=>({...s,content:"",images:{},workingDraft:undefined,reviewAnnotations:[],versions:s.versions.map(v=>({version:v.version,title:v.title,date:v.date}))}));
+ if(thin)data.submissions=data.submissions.map(s=>({...s,content:"",images:{},workingDraft:undefined,reviewAnnotations:[],reviewReplyDrafts:[],reviewReplies:[],versions:s.versions.map(v=>({version:v.version,title:v.title,date:v.date}))}));
  return data;
 }
 export async function bootstrap(env,userId,options={}){

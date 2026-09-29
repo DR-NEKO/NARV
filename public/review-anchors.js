@@ -17,7 +17,7 @@ export function editReviewAnnotation(s,u,action,data,now){
   const found=s.reviewAnnotations.find(a=>a.id===data.id&&a.reviewerId===u.id&&a.version===s.version&&a.round===s.round);
   check(found,"批注不存在或不属于当前审稿轮次。");s.reviewAnnotations=s.reviewAnnotations.filter(a=>a.id!==found.id);return;
  }
- check(typeof data.note==="string"&&data.note.trim().length>=5&&data.note.length<=2000,"批注需 5–2000 字。");
+ check(typeof data.note==="string"&&data.note.length<=2000,"批注最多 2000 字。");
  const anchor=validateReviewAnchor(s.content,data.anchor);
  if(data.id){
   const found=s.reviewAnnotations.find(a=>a.id===data.id&&a.reviewerId===u.id&&a.version===s.version&&a.round===s.round);check(found,"批注不存在或已不属于本轮。");Object.assign(found,{anchor,note:data.note.trim(),updatedAt:now});

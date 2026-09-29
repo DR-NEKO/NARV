@@ -75,5 +75,5 @@ export async function commandScope(db,userId,name,args){
  return before;
 }
 export function thinSnapshotSubmissions(data){
- return {...data,submissions:data.submissions.map(s=>({...s,content:"",images:{},workingDraft:undefined,reviewAnnotations:[],versions:s.versions.map(v=>({version:v.version,title:v.title,date:v.date}))}))};
+ return {...data,submissions:data.submissions.map(s=>({...s,content:"",images:{},workingDraft:undefined,reviewAnnotations:[],reviewReplyDrafts:[],reviewReplies:[],versions:s.versions.map(v=>({version:v.version,title:v.title,date:v.date}))}))};
 }

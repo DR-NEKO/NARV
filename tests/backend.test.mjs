@@ -48,8 +48,8 @@ test("评论退回修改、撤回与收藏在真实存储层闭环，公开数�
  const id=await published(env),content="认真讨论内容，补充具体背景、证据、适用条件和局限。".repeat(8);
  await run(env,"demo-author","addComment",[id,content,true]);
  let state=(await load(env.DB)).state,c=state.comments[0];
- await assert.rejects(run(env,"demo-temp","moderateComment",[c.id,"rejected",""]),/理由/);
- await run(env,"demo-temp","moderateComment",[c.id,"rejected","请补充具体证据与适用范围，再次提交。"]);
+ await assert.rejects(run(env,"demo-temp","moderateComment",[c.id,"rejected","x".repeat(2001)]),/最多/);
+ await run(env,"demo-temp","moderateComment",[c.id,"rejected","改"]);
  await run(env,"demo-author","editComment",[c.id,content+"已补充来源。",true]);
  await run(env,"demo-temp","moderateComment",[c.id,"published"]);
  state=(await load(env.DB)).state;const publicData=snapshot(state);
