@@ -7,7 +7,7 @@ if(action==="review")to(after.authorId,after.status==="accepted"?"稿件已通�
 if(action==="appeal")users.filter(u=>u.id!==after.authorId&&rank(u)>=after.requiredRank&&!after.conflicts.includes(u.id)).forEach(u=>to(u.id,"收到高一级复审请求",title));
 if(action==="request"){if(after.reviewerId)to(after.reviewerId,"作者申请修改或撤回",title);users.filter(u=>rank(u)>=3&&u.id!==after.reviewerId).forEach(u=>to(u.id,"作者有待处理的申请",title))}
 if(action==="resolve")to(after.authorId,"稿件申请已处理",title);
-if(["withdraw","retract"].includes(action))to(after.reviewerId,"作者已撤回稿件",title);
+if(action==="withdraw"&&!(after.reviews||[]).length){const id=before.reviewerId;if(id&&id!==actor?.id)items.push(makeNotification(id,"审稿任务已取消","作者已撤回一篇尚无审稿意见的稿件。","#/workspace/reviews"))}else if(["withdraw","retract"].includes(action))to(after.reviewerId,"作者已撤回稿件",title);
 if(action==="publish")to(after.reviewerId,"审阅的稿件已发表",title,"community");
 if(action==="recuse")to(after.authorId,"审稿人已回避",title+" · 稿件已回到待审队列。");
 return items}

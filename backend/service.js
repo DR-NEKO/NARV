@@ -11,7 +11,7 @@ import {canView} from "../public/workflow.js";
 export const publicComment=c=>({id:c.id,articleId:c.articleId,author:c.author,avatar:c.avatar,content:c.content,status:c.status,createdAt:c.createdAt,updatedAt:c.updatedAt});
 function member(u,actor){return u.id===actor?.id?{id:u.id,name:face(u).name,role:u.role,community:face(u),review:face(u,"review"),suspension:u.suspension||null,accountStatus:u.accountStatus||"active"}:{id:u.id,name:face(u,"review").name,role:u.role,review:face(u,"review"),community:{name:"身份受限",avatar:"◇"},suspension:u.suspension||null,accountStatus:u.accountStatus||"active"}}
 export function submissionView(s,u){
- const item=structuredClone(s);if(s.authorId===u?.id)return item;
+ const item=structuredClone(s);item.reviewAnnotations=(item.reviewAnnotations||[]).filter(a=>a.reviewerId===u?.id);if(s.authorId===u?.id)return item;
  delete item.workingDraft;
  const opaque="author:"+s.id;
  function mask(value){if(value===s.authorId)return opaque;if(Array.isArray(value))return value.map(mask);if(value&&typeof value==="object")return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,mask(v)]));return value}
@@ -62,7 +62,7 @@ async function views(env,before,userId,{thin=true}={}){
  for(const t of memberScores.results){data.metrics[t.user_id]||={};data.metrics[t.user_id].points=t.points}
  data.recordVersions=Object.fromEntries(Object.entries(before.versions).filter(([key])=>!key.startsWith("users/")||key==="users/"+userId));
  for(const t of totals.results)data.voteTotals[t.article_id]={up:t.up,down:t.down,mine:before.state.votes.find(v=>v.articleId===t.article_id&&v.userId===userId)?.value||0};
- if(thin)data.submissions=data.submissions.map(s=>({...s,content:"",images:{},workingDraft:undefined,versions:s.versions.map(v=>({version:v.version,title:v.title,date:v.date}))}));
+ if(thin)data.submissions=data.submissions.map(s=>({...s,content:"",images:{},workingDraft:undefined,reviewAnnotations:[],versions:s.versions.map(v=>({version:v.version,title:v.title,date:v.date}))}));
  return data;
 }
 export async function bootstrap(env,userId,options={}){
@@ -88,12 +88,13 @@ export async function command(env,userId,payload){
  if(payload.name==="transferOE")before.dependencies.push("users/"+payload.args[0]);
  if(payload.name==="updateProfiles")before.dependencies.push(...before.state.users.map(x=>"users/"+x.id));
  const domain=engine(before.state),result=commands[payload.name](domain,u,payload.args),after=domain.state(),extra=[];
- if(payload.name==="deleteDraft"){
- const link="#/submission/"+payload.args[0],related="SELECT key FROM entities WHERE kind='notifications' AND json_extract(head,'$.link')=?";
+ if(payload.name==="deleteDraft"||payload.name==="action"&&payload.args[1]==="withdraw"&&!(after.submissions.find(s=>s.id===payload.args[0])?.reviews||[]).length){
+ const privateWithdraw=payload.name!=="deleteDraft",suffix=privateWithdraw?" AND owner_id!=?":"",bind=statement=>privateWithdraw?statement.bind("#/submission/"+payload.args[0],userId):statement.bind("#/submission/"+payload.args[0]);
+ const link="#/submission/"+payload.args[0],related="SELECT key FROM entities WHERE kind='notifications' AND json_extract(head,'$.link')=?"+suffix;
  extra.push(
-  env.DB.prepare("DELETE FROM blob_links WHERE entity_key IN ("+related+")").bind(link),
-  env.DB.prepare("DELETE FROM records WHERE key IN ("+related+")").bind(link),
-  env.DB.prepare("DELETE FROM entities WHERE kind='notifications' AND json_extract(head,'$.link')=?").bind(link)
+  bind(env.DB.prepare("DELETE FROM blob_links WHERE entity_key IN ("+related+")")),
+  bind(env.DB.prepare("DELETE FROM records WHERE key IN ("+related+")")),
+  bind(env.DB.prepare("DELETE FROM entities WHERE kind='notifications' AND json_extract(head,'$.link')=?"+suffix))
  );
  }
  if(payload.name==="vote"){
@@ -149,3 +150,10 @@ export async function me(env,userId){
 
 export function reportView(r,u){if(rank(u)>=r.requiredRank||r.originalReviewerId===u.id)return {...r,reporterId:r.reporterId===u.id?u.id:"reporter:"+r.id,authorId:r.authorId===u.id?u.id:"author:"+r.articleId};const {id,articleId,articleTitle,reason,evidence,status,createdAt,updatedAt,decidedAt,verdictNote,remedy}=r;return {id,articleId,articleTitle,reason,evidence,status,createdAt,updatedAt,decidedAt,verdictNote,remedy}}
 export async function reportDetail(env,userId,id){const before=await actorScope(env.DB,userId),part=await loadKeys(env.DB,["reports/"+id]),u=before.state.users[0],r=part.state.reports[0];if(!r||![r.reporterId,r.authorId,r.originalReviewerId].includes(u.id)&&rank(u)<r.requiredRank){const e=Error("无权读取此举报。");e.status=403;throw e}return {report:reportView(r,u),recordVersion:part.versions["reports/"+id]}}
+
+
+export async function submissionAccess(env,userId,id){
+ const actor=await actorScope(env.DB,userId),row=await env.DB.prepare("SELECT version,head FROM entities WHERE key=? AND kind='submissions'").bind("submissions/"+id).first();
+ const allowed=!!row&&canView(JSON.parse(row.head),actor.state.users[0]);
+ return {allowed,...(allowed?{recordVersion:row.version}:{})};
+}

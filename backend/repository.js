@@ -8,7 +8,7 @@ export function entries(state){
  map.set("meta",meta);return map;
 }
 export function head(kind,item){
- if(kind==="submissions")return {...item,content:"",images:{},authorAvatar:"◈",workingDraft:undefined,publicSnapshot:item.publicSnapshot?{...item.publicSnapshot,content:"",images:{},authorAvatar:"◈"}:undefined,versions:item.versions?.map(v=>({version:v.version,title:v.title,date:v.date})),history:[],reviews:item.reviews?.map(r=>({...r,note:r.note?.length>=10?"已提供完整具体审稿意见":""})),requests:[],consents:[],appeals:item.appeals?.map(a=>({date:a.date,toRank:a.toRank}))};
+ if(kind==="submissions")return {...item,lastRejection:item.lastRejection?{...item.lastRejection,annotations:undefined,note:"已提供完整具体审稿意见"}:undefined,reviewAnnotations:[],content:"",images:{},authorAvatar:"◈",workingDraft:undefined,publicSnapshot:item.publicSnapshot?{...item.publicSnapshot,content:"",images:{},authorAvatar:"◈"}:undefined,versions:item.versions?.map(v=>({version:v.version,title:v.title,date:v.date})),history:[],reviews:item.reviews?.map(r=>({...r,annotations:undefined,note:r.note?.length>=10?"已提供完整具体审稿意见":""})),requests:[],consents:[],appeals:item.appeals?.map(a=>({date:a.date,toRank:a.toRank}))};
  if(kind==="users")return {...item,community:item.community?{...item.community,avatar:typeof item.community.avatar==="object"?"◈":item.community.avatar}:undefined,review:item.review?{...item.review,avatar:typeof item.review.avatar==="object"?"◇":item.review.avatar}:undefined};
  if(kind==="comments")return {...item,avatar:"◈",history:[],versions:[]};
  if(kind==="reports")return {...item,reason:item.reason.slice(0,300),evidence:"",history:[]};

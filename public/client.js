@@ -1,3 +1,4 @@
+import {canView} from "./workflow.js";
 import {getToken,saveToken,forgetToken,sessionKey} from "./auth-session.js";
 import {rank} from "./roles.js";
 import {publicArticle} from "./identity.js";
@@ -7,8 +8,8 @@ import {config} from "./config.js";
 import {metrics} from "./governance.js";
 export const remote=config.mode==="remote";
 const empty=()=>({user:null,users:[],submissions:[],articles:[],comments:[],myComments:[],applications:[],bookmarks:[],notifications:[],announcements:[],identityAudits:[],accountEvents:[],metrics:{},voteTotals:{},reports:[],scores:[],points:0,recordVersions:{},revision:0,unread:0,feedbackPage:null,feedbackDetail:null});
-let cache=empty(),manifest=null,publicLoaded=false,searchLoaded=false,meLoaded=false,readyRoute="",pending=false,lastSession=null,profileFlight=null,privateEpoch=0,loginBusy=false,loginError="";
-const deletedDrafts=new Set(),routes=new Map(),details=new Map(),inflight=new Map(),base=config.apiBase?.replace(/\/$/,"");
+let cache=empty(),manifest=null,publicLoaded=false,searchLoaded=false,meLoaded=false,readyRoute="",pending=false,lastSession=null,profileFlight=null,pendingPrivacyRoute="",accessEpoch=0,privateEpoch=0,loginBusy=false,loginError="";
+const deniedSubmissions=new Set(),deletedDrafts=new Set(),routes=new Map(),details=new Map(),inflight=new Map(),base=config.apiBase?.replace(/\/$/,"");
 const queryClient=new QueryClient({defaultOptions:{queries:{staleTime:60000,gcTime:300000,retry:0,networkMode:"always"}}});
 const route=()=>new URL(location.hash.slice(1)||"/","https://narv.local");
 const resourceKey=u=>u.pathname==="/messages"?"/messages?page="+(u.searchParams.get("page")||1):u.pathname==="/workspace/posts"?"/workspace"+u.search:u.pathname+u.search;
@@ -35,13 +36,13 @@ export const authPending=()=>remote&&(loginBusy||!!getToken()&&!cache.user);
 restoreHints();
 
 async function request(path,body,{anonymous=false}={}){
- const token=anonymous?null:getToken(),safe=body===undefined||path==="/auth/exchange",attempts=safe?3:1;
+ const generation=accessEpoch,token=anonymous?null:getToken(),safe=body===undefined||path==="/auth/exchange",attempts=safe&&!path.endsWith("/access")?3:1;
  for(let attempt=0;attempt<attempts;attempt++){
   try{
    const res=await fetch(base+path,{method:body===undefined?"GET":"POST",headers:{...(token?{Authorization:"Bearer "+token}:{}),...(body===undefined?{}:{"Content-Type":"application/json"})},...(body===undefined?{}:{body:JSON.stringify(body)}),cache:anonymous?"default":"no-store",signal:AbortSignal.timeout(15000)});
    if(!anonymous&&token!==getToken()){const e=Error("登录状态已变化，请重新打开当前页面。");e.status=499;throw e}
    let data;try{data=await res.json()}catch{const e=Error("服务返回异常，请稍后重试。");e.status=res.status||503;throw e}
-   if(!res.ok){if(res.status===401){forgetToken();clearPrivate()}const e=Error(data.error||"服务暂时无法连接。");e.status=res.status;throw e}return data;
+   if(!res.ok){const denied=path.match(/^\/api\/submissions\/([^/?]+)(?:\?|$)/);if(denied&&[403,404].includes(res.status))purgeSubmission(decodeURIComponent(denied[1]));if(res.status===401){forgetToken();clearPrivate()}const e=Error(data.error||"服务暂时无法连接。");e.status=res.status;throw e}if(!anonymous&&body===undefined&&generation!==accessEpoch){const e=Error("访问状态已变化，请重新打开页面。");e.status=499;throw e}return data;
   }catch(error){
    if(attempt+1>=attempts||error.status&&![502,503,504].includes(error.status))throw error;
    await new Promise(resolve=>setTimeout(resolve,250*(attempt+1)));
@@ -78,7 +79,7 @@ function mergePrivate(data){
  }
 
  mergeArticles(data.articles||[]);
- if(data.submissions)data={...data,submissions:data.submissions.filter(s=>!deletedDrafts.has(s.id)).map(s=>{const key="submissions/"+s.id;return (data.recordVersions?.[key]||0)<(cache.recordVersions[key]||0)?cache.submissions.find(x=>x.id===s.id)||s:s})};
+ if(data.submissions)data={...data,submissions:data.submissions.filter(s=>!deletedDrafts.has(s.id)&&!deniedSubmissions.has(s.id)).map(s=>{const key="submissions/"+s.id;return (data.recordVersions?.[key]||0)<(cache.recordVersions[key]||0)?cache.submissions.find(x=>x.id===s.id)||s:s})};
  if(data.comments)data={...data,comments:data.comments.map(c=>(data.recordVersions?.["comments/"+c.id]||0)<(cache.recordVersions["comments/"+c.id]||0)?cache.comments.find(x=>x.id===c.id)||c:c)};
 
  for(const name of ["submissions","users","myComments","applications","notifications","identityAudits","accountEvents","reports","scores","memberResults","feedbackPage"]){if(Object.hasOwn(data,name))cache[name]=data[name]};
@@ -105,21 +106,29 @@ export async function ensureSearch(){
  else for(const a of [...cache.articles])await article(a.id);searchLoaded=true;document.dispatchEvent(new Event("narv:public-ready"))})();
  inflight.set("search",work);try{await work}finally{inflight.delete("search")}
 }
-function warm(u){if(u.pathname==="/workspace/profile"||u.pathname==="/submit")return !!cache.user;if(u.pathname.startsWith("/workspace")||u.pathname==="/messages"||u.pathname==="/announcements")return routes.has(resourceKey(u));if(u.pathname.startsWith("/feedback/"))return false;if(u.pathname.startsWith("/member/"))return !!cache.member&&cache.member.id===u.pathname.split("/")[2];if(u.pathname.startsWith("/submission/")||u.pathname.startsWith("/edit/"))return details.has(u.pathname.split("/")[2]);return false}
-export const routeLoading=()=>remote&&inflight.has(resourceKey(route()))&&!warm(route());
+const sensitiveRoute=u=>/^\/(submission|edit)\//.test(u.pathname)||u.pathname==="/workspace/reviews";
+function warm(u){if(sensitiveRoute(u))return readyRoute===resourceKey(u);if(u.pathname==="/workspace/profile"||u.pathname==="/submit")return !!cache.user;if(u.pathname.startsWith("/workspace")||u.pathname==="/messages"||u.pathname==="/announcements")return routes.has(resourceKey(u));if(u.pathname.startsWith("/feedback/"))return false;if(u.pathname.startsWith("/member/"))return !!cache.member&&cache.member.id===u.pathname.split("/")[2];if(u.pathname.startsWith("/submission/")||u.pathname.startsWith("/edit/"))return details.has(u.pathname.split("/")[2]);return false}
+export const routeLoading=()=>remote&&(pendingPrivacyRoute===resourceKey(route())||inflight.has(resourceKey(route()))&&!warm(route()));
 export async function refresh({force=false}={}){
  if(!remote)return;
  const current=route(),key=resourceKey(current);
  if(getToken()!==lastSession){clearPrivate();lastSession=getToken()}
- if(readyRoute===key&&!force&&!current.pathname.startsWith("/workspace/members"))return;
- const cachedRoute=routes.get(key);if(cachedRoute&&!force){mergePrivate(cachedRoute.data);if(!current.pathname.startsWith("/workspace/members")&&Date.now()-cachedRoute.time<60000){readyRoute=key;if(!meLoaded)profile().then(()=>document.dispatchEvent(new Event("narv:session-ready"))).catch(()=>{});return}}
+ if(readyRoute===key&&!force&&!current.pathname.startsWith("/workspace/members")&&!sensitiveRoute(current))return;
+ const cachedRoute=routes.get(key);if(cachedRoute&&!force&&!sensitiveRoute(current)){mergePrivate(cachedRoute.data);if(!current.pathname.startsWith("/workspace/members")&&Date.now()-cachedRoute.time<60000){readyRoute=key;if(!meLoaded)profile().then(()=>document.dispatchEvent(new Event("narv:session-ready"))).catch(()=>{});return}}
 
  if(inflight.has(key)){const previous=inflight.get(key);if(!force)return previous;try{await previous}catch{}return refresh({force:true})}
+ if(sensitiveRoute(current))readyRoute="";
  const epoch=privateEpoch,work=(async()=>{const [name,id]=current.pathname.slice(1).split("/");await Promise.all([["workspace","messages","member","report","feedback","contact","submission","edit","submit"].includes(name)?Promise.resolve():publicLoad(),profile().catch(error=>{if(["workspace","submission","edit","submit","report","feedback","contact","messages"].includes(name))throw error})]);if(epoch!==privateEpoch)return refresh({force:true});
  if(name==="workspace"||name==="messages"||name==="announcements"){
  if(cache.user&&!(name==="workspace"&&id==="profile")){const cached=routes.get(key);const tab=name==="messages"?"messages":name==="announcements"?"announcements":id==="posts"?"":id||"";let data=cached?.data;
- if(force||!data||Date.now()-cached.time>60000||tab==="members"){data=await workspaceData(current,{force:force||tab==="members"});routes.set(key,{time:Date.now(),data})}if(resourceKey(route())===key){mergePrivate(data);persistHints()}}
- }else if(["submission","edit"].includes(name)&&cache.user){let data=details.get(id);if(force||!data||Date.now()-data.time>30000){data={...await request("/api/submissions/"+encodeURIComponent(id)),time:Date.now()};details.set(id,data)}if(deletedDrafts.has(id)||(data.recordVersion||0)<(cache.recordVersions["submissions/"+id]||0))return;cache.submissions=[...cache.submissions.filter(s=>s.id!==id),data.submission];cache.recordVersions["submissions/"+id]=data.recordVersion;Object.assign(cache.metrics,data.metrics)}
+ if(force||!data||Date.now()-cached.time>60000||tab==="members"||tab==="reviews"){data=await workspaceData(current,{force:force||tab==="members"||tab==="reviews"});for(const s of data.submissions||[])deniedSubmissions.delete(s.id);routes.set(key,{time:Date.now(),data})}if(resourceKey(route())===key){mergePrivate(data);persistHints()}}
+ }else if(["submission","edit"].includes(name)&&cache.user){
+  let data;try{data={...await request("/api/submissions/"+encodeURIComponent(id)),time:Date.now()}}
+  catch(error){if([403,404].includes(error.status)){readyRoute=key;return}purgeSubmission(id);throw error}
+  if(route().pathname!==current.pathname)return;
+  if(deletedDrafts.has(id)||(data.recordVersion||0)<(cache.recordVersions["submissions/"+id]||0))return;
+  deniedSubmissions.delete(id);details.set(id,data);cache.submissions=[...cache.submissions.filter(s=>s.id!==id),data.submission];cache.recordVersions["submissions/"+id]=data.recordVersion;Object.assign(cache.metrics,data.metrics)
+ }
  else if(name==="feedback"&&cache.user&&rank(cache.user)>=4){cache.feedbackDetail=null;try{const item=await request("/api/feedback/"+encodeURIComponent(id));if(route().pathname===current.pathname)cache.feedbackDetail=item}catch(error){if(route().pathname===current.pathname){cache.feedbackDetail={id,error:error.message}}}}
  else if(name==="member"&&cache.user){const data=await request("/api/members/"+encodeURIComponent(id));if(route().pathname!==current.pathname)return;cache.member=data.member;cache.memberArticles=data.articles;cache.metrics[id]={...cache.metrics[id],points:data.points};cache.users=[...cache.users.filter(x=>x.id!==id),data.member];cache.recordVersions["users/"+id]=data.recordVersion}
  else if(name==="report"&&cache.user){const data=await request("/api/reports/"+encodeURIComponent(id));cache.reports=[...cache.reports.filter(r=>r.id!==id),data.report];cache.recordVersions["reports/"+id]=data.recordVersion}
@@ -151,7 +160,7 @@ export async function login(){
   location.assign(base+"/auth/github?challenge="+challenge);
  }catch(error){loginBusy=false;throw error}
 }
-function clearPrivate(){privateEpoch++;inflight.clear();profileFlight=null;if(!getToken())for(const key of Object.keys(sessionStorage))if(key.startsWith("narv-contact-draft:"))sessionStorage.removeItem(key);const pub={articles:cache.articles,comments:cache.comments.filter(c=>c.status==="published"&&!c.authorId),announcements:cache.announcements.filter(a=>a.audience==="public")};cache={...empty(),...pub};queryClient.clear();routes.clear();details.clear();deletedDrafts.clear();readyRoute="";meLoaded=false;sessionStorage.removeItem(hintsKey);document.dispatchEvent(new Event("narv:private-cleared"))}
+function clearPrivate(){pendingPrivacyRoute="";privateEpoch++;inflight.clear();profileFlight=null;if(!getToken())for(const key of Object.keys(sessionStorage))if(key.startsWith("narv-contact-draft:"))sessionStorage.removeItem(key);const pub={articles:cache.articles,comments:cache.comments.filter(c=>c.status==="published"&&!c.authorId),announcements:cache.announcements.filter(a=>a.audience==="public")};cache={...empty(),...pub};queryClient.clear();routes.clear();details.clear();deletedDrafts.clear();deniedSubmissions.clear();readyRoute="";meLoaded=false;sessionStorage.removeItem(hintsKey);document.dispatchEvent(new Event("narv:private-cleared"))}
 export async function logout(){if(!remote){local.saveSession(null);return}const token=getToken();forgetToken();clearPrivate();if(token)void fetch(base+"/auth/logout",{method:"POST",keepalive:true,headers:{Authorization:"Bearer "+token,"Content-Type":"application/json"},body:"{}"}).catch(()=>{});}
 
 export async function prefetchWorkspace(href){
@@ -164,7 +173,7 @@ function applyResult(name,args,response){
  if(response.profile){if(cache.user&&cache.user.role!==response.profile.user.role)clearPrivate();cache.user=response.profile.user;cache.points=response.profile.points;cache.unread=response.profile.unread;cache.users=[cache.user,...cache.users.filter(x=>x.id!==cache.user.id)];meLoaded=true}
  Object.assign(cache.recordVersions,response.recordVersions||{});
  let result=response.result;
- if(["create","action","resubmit"].includes(name)){
+ if(["create","action","resubmit"].includes(name)&&!deniedSubmissions.has(result.id)){
  const old=cache.submissions.find(s=>s.id===result.id)||{},input=name==="create"?args[0]:name==="resubmit"?{}:args[2]||{};
  if(result.publicSnapshot)result.publicSnapshot={...old.publicSnapshot,...result.publicSnapshot,content:old.publicSnapshot?.content||old.content||cache.articles.find(a=>a.id===result.id)?.content||"",images:old.publicSnapshot?.images||old.images||{}};
  result={...old,...result,images:result.workingDraft&&args[1]==="save"?old.images||{}:input.images||old.images||{},...(result.workingDraft?{workingDraft:{...result.workingDraft,images:input.images||old.workingDraft?.images||old.images||{}}}:{})};
@@ -207,9 +216,9 @@ export const members=()=>remote?cache.memberResults||[]:local.accounts().filter(
 export const accounts=()=>remote?cache.users:local.accounts();
 export const account=id=>accounts().find(u=>u.id===id);
 export const saveSession=u=>{if(remote)throw Error("线上账号需通过 GitHub 登录。");return local.saveSession(u)};
-export const all=()=>remote?cache.submissions:local.all();
-export const list=u=>remote?cache.submissions:local.list(u);
-export const get=(id,u)=>remote?cache.submissions.find(s=>s.id===id):local.get(id,u);
+export const all=()=>remote?cache.submissions.filter(s=>canView(s,cache.user)&&!deniedSubmissions.has(s.id)):local.all();
+export const list=u=>remote?cache.submissions.filter(s=>canView(s,u)&&!deniedSubmissions.has(s.id)):local.list(u);
+export const get=(id,u)=>remote?cache.submissions.find(s=>s.id===id&&canView(s,u||cache.user)&&!deniedSubmissions.has(id)):local.get(id,u);
 export const publicArticles=()=>remote?cache.articles:local.publicArticles();
 export const comments=(id,u)=>remote?cache.comments.filter(c=>(!id||c.articleId===id)&&(u||c.status==="published")):local.comments(id,u);
 export const myComments=u=>remote?cache.myComments:local.myComments(u);
@@ -254,3 +263,33 @@ if(remote)window.addEventListener("storage",event=>{
  document.dispatchEvent(new Event("narv:session-ready"));
  void refresh({force:true}).then(()=>document.dispatchEvent(new Event("narv:refresh"))).catch(()=>{});
 });
+
+function purgeSubmission(id){
+ if(pendingPrivacyRoute.endsWith("/"+id))pendingPrivacyRoute="";if(cache.user)localStorage.removeItem(draftKey(cache.user,id));deniedSubmissions.add(id);accessEpoch++;details.delete(id);cache.submissions=cache.submissions.filter(s=>s.id!==id);cache.notifications=cache.notifications.filter(n=>n.link!=="#/submission/"+id);
+ for(const entry of routes.values())if(entry.data){entry.data.submissions=(entry.data.submissions||[]).filter(s=>s.id!==id);entry.data.notifications=(entry.data.notifications||[]).filter(n=>n.link!=="#/submission/"+id);entry.time=0}
+ queryClient.clear();readyRoute="";
+ document.dispatchEvent(new CustomEvent("narv:submission-inaccessible",{detail:{id}}));
+ document.dispatchEvent(new Event("narv:refresh"));
+}
+export async function verifySubmission(id){
+ if(!remote)return !!local.get(id,local.session());
+ const result=await request("/api/submissions/"+encodeURIComponent(id)+"/access");
+ if(!result.allowed)purgeSubmission(id);
+ return result;
+}
+let accessCheck=null;
+async function checkOpenSubmission(){
+ if(!remote||!cache.user||document.hidden||accessCheck)return;
+ const current=route(),[name,id]=current.pathname.slice(1).split("/");
+ if(!["submission","edit"].includes(name)||!id)return;
+ const work=(async()=>{try{
+  const result=await verifySubmission(id);if(!result.allowed||route().pathname!==current.pathname)return;
+  if(name==="submission"&&result.recordVersion!==cache.recordVersions["submissions/"+id]){await refresh({force:true});document.dispatchEvent(new Event("narv:refresh"))}
+  if(pendingPrivacyRoute===resourceKey(current)){pendingPrivacyRoute="";readyRoute=resourceKey(current);document.dispatchEvent(new Event("narv:refresh"))}
+ }catch{purgeSubmission(id)}})();accessCheck=work;try{await work}finally{if(accessCheck===work)accessCheck=null}
+}
+if(remote){
+ setInterval(()=>void checkOpenSubmission(),30000);
+ window.addEventListener("focus",()=>void checkOpenSubmission());
+ document.addEventListener("visibilitychange",()=>{if(document.hidden&&cache.user&&route().pathname.startsWith("/submission/")){pendingPrivacyRoute=resourceKey(route());document.dispatchEvent(new Event("narv:refresh"))}else void checkOpenSubmission()});
+}

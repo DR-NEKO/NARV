@@ -36,7 +36,7 @@ async function targetByInput(env,u,d){
  check(d.type==="reviewer_report"&&d.relatedId,"举报用户请填写 UID；举报审稿人可填写 UID 或自己的稿件编号。");
  const row=await env.DB.prepare("SELECT head FROM entities WHERE key=? AND owner_id=?").bind("submissions/"+d.relatedId,u.id).first();
  check(row,"未找到你的稿件，无法据此定位审稿人。");
- const s=JSON.parse(row.head);let id;if(d.reviewVersion||d.reviewRound){const matches=(s.reviews||[]).filter(r=>(!d.reviewVersion||r.version===d.reviewVersion)&&(!d.reviewRound||(r.round||1)===d.reviewRound));check(matches.length===1,"对应审稿意见不存在或不唯一，请同时填写版本与轮次。");id=matches[0].reviewerId}else id=(s.status==="reviewing"?s.reviewerId:null)||s.reviews?.at(-1)?.reviewerId;
+ const s=JSON.parse(row.head);let id;if(d.reviewVersion||d.reviewRound){const matches=(s.reviews||[]).filter(r=>(!d.reviewVersion||r.version===d.reviewVersion)&&(!d.reviewRound||(r.round||1)===d.reviewRound));check(matches.length===1,"对应审稿意见不存在或不唯一，请同时填写版本与轮次。");id=matches[0].reviewerId}else id=(s.status==="reviewing"?s.reviewerId:null)||s.reviews?.at(-1)?.reviewerId||s.withdrawnReviewerId;
  check(id,"该稿件还没有可以定位的审稿人，请填写审稿身份 UID。");
  const result=await env.DB.prepare("SELECT head,version FROM entities WHERE key=?").bind("users/"+id).first();
  check(result,"该审稿账号已不存在。");return {...JSON.parse(result.head),_recordVersion:result.version};

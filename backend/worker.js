@@ -4,7 +4,7 @@ import {articleState} from "./interactions.js";
 import {publicResponse} from "./public-content.js";
 import {authRoute,userFromRequest,renewSession} from "./auth.js";
 import {load} from "./repository.js";
-import {snapshot,command,scheduled,bootstrap,detail,me,reportDetail} from "./service.js";
+import {snapshot,command,scheduled,bootstrap,detail,me,reportDetail,submissionAccess} from "./service.js";
 import {hash} from "./auth.js";
 async function jsonBody(request){
  const reader=request.body?.getReader();if(!reader)return {};
@@ -51,6 +51,7 @@ export default {
    if(interaction&&req.method==="GET"){if(!userId)return finish(Response.json({error:"请先登录。"},{status:401}));return finish(Response.json(await articleState(env,userId,interaction[1])))}
    const caseId=url.pathname.match(/^\/api\/reports\/([^/]+)$/);
    if(caseId&&req.method==="GET"){if(!userId)return finish(Response.json({error:"请先登录。"},{status:401}));return finish(Response.json(await reportDetail(env,userId,caseId[1])))}
+   const access=url.pathname.match(/^\/api\/submissions\/([^/]+)\/access$/);if(access&&req.method==="GET"){if(!userId)return finish(Response.json({error:"请先登录。"},{status:401}));return finish(Response.json(await submissionAccess(env,userId,access[1])))}
    const target=url.pathname.match(/^\/api\/submissions\/([^/]+)$/);
    if(target&&req.method==="GET"){if(!userId)return finish(Response.json({error:"请先登录。"},{status:401}));return finish(Response.json(await detail(env,userId,target[1],url.searchParams.has("version")?url.searchParams.get("version"):undefined)))}
    if(url.pathname==="/api/command"&&req.method==="POST"){

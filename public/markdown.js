@@ -57,10 +57,39 @@ md.renderer.rules.image=(tokens,i,options,env,self)=>{
  const image=tokens[i],original=image.attrGet("src")||"",src=imageSource(original,env),caption=self.renderInlineAsText(image.children||[],options,env);
  if(/^narv-image:img-\d+$/.test(original)&&!validImageSource(src))return escape("[图片附件缺失："+(caption||original.slice(11))+"]");
  if(!imageAllowed(src))return escape("[图片地址不受支持："+caption+"]");
- return '<img src="'+escape(src)+'" alt="'+escape(caption)+'" loading="lazy" decoding="async" referrerpolicy="no-referrer">'+(image.meta?.figure&&caption?'<figcaption>'+escape(caption)+'</figcaption>':"");
+ return '<img src="'+escape(src)+'" alt="'+escape(caption)+'" loading="lazy" decoding="async" referrerpolicy="no-referrer"'+(env.annotatable&&!image.meta?.figure?' class="review-atom" data-review-text="'+escape(caption)+'"':"")+'>'+(image.meta?.figure&&caption?'<figcaption>'+escape(caption)+'</figcaption>':"");
 };
 md.renderer.rules.table_open=()=>'<div class="markdown-table" role="region" aria-label="数据表格" tabindex="0"><table>\n';
 md.renderer.rules.table_close=()=>'</table></div>\n';
+function inlineText(children=[]){return children.map(t=>{
+ if(["text","code_inline","narv_math_inline"].includes(t.type))return t.content;
+ if(["softbreak","hardbreak"].includes(t.type))return "\n";
+ if(t.type==="image")return inlineText(t.children);
+ return "";
+}).join("")}
+function collectBlocks(tokens){
+ const result=[];let tableMap=null,cell=0;
+ for(let i=0;i<tokens.length;i++){
+  const t=tokens[i];
+  if(t.type==="table_open"){tableMap=t.map;cell=0}
+  if(t.type==="table_close")tableMap=null;
+  if(tableMap&&["th_open","td_open"].includes(t.type)&&tokens[i+1]?.type==="inline"){
+   const text=inlineText(tokens[i+1].children),id="t"+tableMap[0]+"-"+cell++;if(text.trim())result.push({id,text,index:i,map:tableMap});continue;
+  }
+  if(!t.map)continue;
+  if(["paragraph_open","heading_open"].includes(t.type)&&tokens[i+1]?.type==="inline"){
+   const text=inlineText(tokens[i+1].children);
+   if(text.trim())result.push({id:"b"+t.map[0]+"-"+t.map[1],text,index:i,map:t.map});
+  }else if(["fence","code_block","narv_math_block"].includes(t.type)&&t.content.trim())result.push({id:"b"+t.map[0]+"-"+t.map[1],text:t.content,index:i,map:t.map});
+ }
+ return result;
+}
+const fenceRender=md.renderer.rules.fence,codeRender=md.renderer.rules.code_block;
+const attrs=token=>token.meta?.reviewBlock?' data-review-block="'+escape(token.meta.reviewBlock)+'"':"";
+md.renderer.rules.fence=(tokens,i,options,env,self)=>{const html=fenceRender(tokens,i,options,env,self);return attrs(tokens[i])?'<div'+attrs(tokens[i])+'>'+html+'</div>':html};
+md.renderer.rules.code_block=(tokens,i,options,env,self)=>{const html=codeRender(tokens,i,options,env,self);return attrs(tokens[i])?'<div'+attrs(tokens[i])+'>'+html+'</div>':html};
+const mathBlockRender=md.renderer.rules.narv_math_block;
+md.renderer.rules.narv_math_block=(tokens,i,options,env,self)=>{const html=mathBlockRender(tokens,i,options,env,self);return attrs(tokens[i])?'<div'+attrs(tokens[i])+'>'+html+'</div>':html};
 md.core.ruler.push("narv_structure",state=>{
  let index=0;
  for(let i=0;i<state.tokens.length;i++){
@@ -73,13 +102,16 @@ md.core.ruler.push("narv_structure",state=>{
    }
   }
  }
+ if(state.env.annotatable)for(const block of collectBlocks(state.tokens)){
+  const t=state.tokens[block.index];
+  if(["paragraph_open","heading_open","th_open","td_open"].includes(t.type)){t.attrSet("data-review-block",block.id);if(t.hidden){t.hidden=false;state.tokens[block.index+2].hidden=false}}
+  else t.meta={...t.meta,reviewBlock:block.id};
+ }
 });
 export function renderMarkdown(source,images={},env={}){return md.render(String(source||""),{...env,images})}
 export function markdownHeadings(source){
  const tokens=md.parse(String(source||""),{}),entries=[];
- for(let i=0;i<tokens.length;i++)if(tokens[i].type==="heading_open"){
-  const inline=tokens[i+1],text=(inline.children||[]).filter(t=>["text","code_inline","narv_math_inline","image"].includes(t.type)).map(t=>t.content).join("");
-  entries.push({id:tokens[i].attrGet("id"),level:Number(tokens[i].tag.slice(1)),text});
- }
+ for(let i=0;i<tokens.length;i++)if(tokens[i].type==="heading_open")entries.push({id:tokens[i].attrGet("id"),level:Number(tokens[i].tag.slice(1)),text:inlineText(tokens[i+1].children)});
  return entries;
 }
+export function reviewBlocks(source){return collectBlocks(md.parse(String(source||""),{})).map(({index,...b})=>b)}

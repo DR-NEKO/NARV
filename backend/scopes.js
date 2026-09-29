@@ -10,8 +10,8 @@ export async function workspaceScope(db,userId,{tab="",page=1,query="",side="rev
  const before=await actorScope(db,userId),u=before.state.users[0],offset=(Math.max(1,page)-1)*50,plans=[];
  const add=(where,args=[],limit=50,at=offset)=>plans.push(db.prepare("SELECT key,version,head FROM entities WHERE "+where+" ORDER BY updated_at DESC,key LIMIT ? OFFSET ?").bind(...args,limit,at));
  if(["","posts","reviews","applications","members"].includes(tab))add("kind='submissions' AND owner_id=?",[userId],200,0);
- if(["reviews","applications","members"].includes(tab))add("kind='submissions' AND reviewer_id=?",[userId],200,0);
- if(tab==="messages")add("kind='notifications' AND owner_id=?",[userId]);
+ if(["reviews","applications","members"].includes(tab))add("kind='submissions' AND reviewer_id=? AND NOT(status='withdrawn' AND COALESCE(json_array_length(json_extract(head,'$.reviews')),0)=0)",[userId],200,0);
+ if(tab==="messages")add("kind='notifications' AND owner_id=? AND (json_extract(head,'$.link') NOT LIKE '#/submission/%' OR EXISTS(SELECT 1 FROM entities s WHERE s.kind='submissions' AND s.id=substr(json_extract(entities.head,'$.link'),14) AND (s.owner_id=? OR NOT(s.status='withdrawn' AND COALESCE(json_array_length(json_extract(s.head,'$.reviews')),0)=0 AND COALESCE(json_array_length(json_extract(s.head,'$.decisions')),0)=0 AND json_extract(s.head,'$.publishedAt') IS NULL))))",[userId,userId]);
  if(tab==="announcements")add("kind='announcements'",[],100);
  if(tab==="reviews"&&rank(u)>=1&&u.role!=="original_editor")add("kind='submissions' AND status='submitted' AND required_rank<=? AND owner_id!=?",[rank(u),userId]);
  else if(tab==="comments"&&rank(u)>=1)add("kind='comments' AND status='pending'");
@@ -63,7 +63,7 @@ export async function commandScope(db,userId,name,args){
  for(const a of before.state.applications)fullKeys.add("users/"+a.userId);
  for(const r of before.state.reports){fullKeys.add("submissions/"+r.articleId);fullKeys.add("users/"+r.originalReviewerId);fullKeys.add("scoreEvents/penalty:"+r.articleId+":v"+r.reportedVersion)}
  if(["vote","toggleBookmark"].includes(name))before.dependencies.push("votes/"+userId+":"+args[0],"bookmarks/"+userId+":"+args[0]);
- if(["promote","suspendAccount"].includes(name))for(const row of await add("kind='submissions' AND reviewer_id=?",[args[0]],5))fullKeys.add(row.key);
+ if(["promote","suspendAccount"].includes(name))for(const row of await add("kind='submissions' AND reviewer_id=? AND NOT(status='withdrawn' AND COALESCE(json_array_length(json_extract(head,'$.reviews')),0)=0)",[args[0]],5))fullKeys.add(row.key);
  if(["action","apply","promote","endorse","suspendAccount"].includes(name))await add("kind='users' AND role!='user'",[],10);
  if(name==="endorse"){const target=before.state.applications.find(x=>x.id===args[0])?.userId;if(target)await add("kind='submissions' AND (owner_id=? OR EXISTS(SELECT 1 FROM json_each(json_extract(head,'$.reviews')) WHERE json_extract(value,'$.reviewerId')=?))",[target,target],200)}
  thin.push(...await select(db,"kind='users' AND role='original_editor'",[],{limit:1}));
@@ -75,5 +75,5 @@ export async function commandScope(db,userId,name,args){
  return before;
 }
 export function thinSnapshotSubmissions(data){
- return {...data,submissions:data.submissions.map(s=>({...s,content:"",images:{},workingDraft:undefined,versions:s.versions.map(v=>({version:v.version,title:v.title,date:v.date}))}))};
+ return {...data,submissions:data.submissions.map(s=>({...s,content:"",images:{},workingDraft:undefined,reviewAnnotations:[],versions:s.versions.map(v=>({version:v.version,title:v.title,date:v.date}))}))};
 }
