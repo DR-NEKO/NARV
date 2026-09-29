@@ -5,7 +5,7 @@ import {load,save,engine} from "../backend/repository.js";
 import {command,snapshot,scheduled} from "../backend/service.js";
 import {initialUsers} from "../public/roles.js";
 import {withIdentities} from "../public/identity.js";
-import {newSession,authRoute,hash,userFromRequest} from "../backend/auth.js";
+import {newSession,authRoute,hash,userFromRequest,renewSession} from "../backend/auth.js";
 import worker from "../backend/worker.js";
 const draft={title:"真实后端测试",category:"科研与实践",summary:"检查服务端存储和权限隔离的完整流程。",content:"这是包含背景与依据的内容，用于检查只有作者能修改稿件、审稿人才能决定且作者负责最终发表。".repeat(3),consents:{original:true,privacy:true,policy:true,responsibility:true}};
 async function setup(){
@@ -76,7 +76,7 @@ test("修订草稿不替换已提交正文，降级撤销访问并释放任务",
  assert.equal(snapshot(state,"demo-reviewer").submissions.length,0);
  }finally{env.DB.close()}
 });
-test("GitHub OAuth state/cookie + 双段 PKCE + 单次 ticket；不保存 GitHub token",async()=>{
+test("GitHub OAuth state/cookie + 双段 PKCE + 可恢复交换；不保存 GitHub token",async()=>{
  const env=await setup();try{
  const verifier="a".repeat(43),challenge=await hash(verifier);
  const start=await authRoute(new Request(env.API_URL+"/auth/github?challenge="+challenge),env);
@@ -88,7 +88,12 @@ test("GitHub OAuth state/cookie + 双段 PKCE + 单次 ticket；不保存 GitHub
  const redirect=await authRoute(callback,env,null,fetcher),ticket=new URL(new URL(redirect.headers.get("location")).hash.slice(1),"https://x").searchParams.get("ticket");
  const exchanged=await authRoute(new Request(env.API_URL+"/auth/exchange",{method:"POST"}),env,{ticket,verifier});const {token}=await exchanged.json();
  const userId=await userFromRequest(new Request(env.API_URL,{headers:{Authorization:"Bearer "+token}}),env);
- assert(userId);await assert.rejects(authRoute(new Request(env.API_URL+"/auth/exchange",{method:"POST"}),env,{ticket,verifier}));
+ assert(userId);
+ const replay=await (await authRoute(new Request(env.API_URL+"/auth/exchange",{method:"POST"}),env,{ticket,verifier})).json();assert.equal(replay.token,token);assert.equal(replay.profile.user.id,userId);
+ assert.equal((await env.DB.prepare("SELECT count(*) AS n FROM auth WHERE kind='session' AND json_extract(data,'$.userId')=?").bind(userId).first()).n,1);
+ assert(replay.expiresAt>Date.now()+29*86400000);
+ await authRoute(new Request(env.API_URL+"/auth/logout",{method:"POST",headers:{Authorization:"Bearer "+token}}),env);
+ await assert.rejects(authRoute(new Request(env.API_URL+"/auth/exchange",{method:"POST"}),env,{ticket,verifier}));
  const stateData=(await load(env.DB)).state;assert.equal(stateData.users.find(u=>u.id===userId).role,"user");assert(!JSON.stringify(stateData).includes("private-github-login"));assert(!JSON.stringify(stateData).includes("never-store"));
  await assert.rejects(authRoute(callback,env,null,fetcher));
  }finally{env.DB.close()}
@@ -121,6 +126,40 @@ test("登录错误 cookie/PKCE 被拒绝，只有指定 numeric ID 获得最高�
  response=await authRoute(new Request(env.API_URL+"/auth/callback?code=x&state="+state,{headers:{Cookie:cookie}}),env,null,fetcher);
  const ticket=new URL(new URL(response.headers.get("location")).hash.slice(1),"https://x").searchParams.get("ticket");
  await assert.rejects(authRoute(new Request(env.API_URL+"/auth/exchange",{method:"POST"}),env,{ticket,verifier:"c".repeat(43)}));
+ const valid=await (await authRoute(new Request(env.API_URL+"/auth/exchange",{method:"POST"}),env,{ticket,verifier})).json();assert(valid.token,"invalid PKCE must not destroy a valid login ticket");
  const rows=(await load(env.DB)).state.users;assert.equal(rows.length,1);assert.equal(rows[0].role,"original_editor");
+ }finally{env.DB.close()}
+});
+
+
+test("并行登录各自绑定 cookie；只重试 GitHub 资料读取；并发交换只建立一份会话",async()=>{
+ const env=await setup();try{
+ const verifier="d".repeat(43),challenge=await hash(verifier),starts=await Promise.all([1,2].map(()=>authRoute(new Request(env.API_URL+"/auth/github?challenge="+challenge),env)));
+ const cookies=starts.map(s=>s.headers.get("set-cookie").split(";")[0]);
+ assert.notEqual(cookies[0].split("=")[0],cookies[1].split("=")[0]);
+ let reads=0,grants=0;
+ const fake=async url=>{if(url.includes("access_token")){grants++;return Response.json({access_token:"not-stored"})}if(++reads===1)throw Error("transient connection");return Response.json({id:555})};
+ const state=new URL(starts[0].headers.get("location")).searchParams.get("state");
+ const response=await authRoute(new Request(env.API_URL+"/auth/callback?code=x&state="+state,{headers:{Cookie:cookies.join("; ")}}),env,null,fake);
+ assert.equal(grants,1);assert.equal(reads,2);
+ const url=new URL(new URL(response.headers.get("location")).hash.slice(1),"https://x"),ticket=url.searchParams.get("ticket");assert.equal(url.searchParams.get("attempt"),challenge);
+ const ticketRow=await env.DB.prepare("SELECT expires FROM auth WHERE key=?").bind(await hash(ticket)).first();assert(ticketRow.expires>Date.now()+9*60000);
+ const responses=await Promise.all([1,2].map(async()=>await (await authRoute(new Request(env.API_URL+"/auth/exchange",{method:"POST"}),env,{ticket,verifier})).json()));
+ assert.equal(responses[0].token,responses[1].token);assert.equal(responses[0].profile.user.id,responses[1].profile.user.id);
+ assert.equal((await env.DB.prepare("SELECT count(*) AS n FROM auth WHERE kind='session'").first()).n,1);
+ assert(!JSON.stringify((await env.DB.prepare("SELECT data FROM auth").all()).results).includes(responses[0].token));
+ }finally{env.DB.close()}
+});
+
+
+test("旧有效会话可续为30天，失效或已退出的会话不续期",async()=>{
+ const env=await setup();try{
+ const token=await newSession(env,"demo-author"),key=await hash(token),request=new Request(env.API_URL+"/api/me",{headers:{Authorization:"Bearer "+token}});
+ await env.DB.prepare("UPDATE auth SET expires=? WHERE key=?").bind(Date.now()+3600000,key).run();
+ assert(await renewSession(request,env,"demo-author")>Date.now()+29*86400000);
+ assert.equal(await renewSession(request,env,"demo-author"),undefined,"do not renew again within a day");
+ await env.DB.prepare("UPDATE auth SET expires=? WHERE key=?").bind(Date.now()-1000,key).run();
+ assert.equal(await renewSession(request,env,"demo-author"),undefined);
+ await env.DB.prepare("DELETE FROM auth WHERE key=?").bind(key).run();assert.equal(await renewSession(request,env,"demo-author"),undefined);
  }finally{env.DB.close()}
 });

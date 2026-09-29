@@ -1,7 +1,8 @@
+import {createFeedback,feedbackInbox,feedbackDetail,updateFeedback} from "./feedback.js";
 import {memberDetail,accountConfirmation,closeAccount} from "./account-admin.js";
 import {articleState} from "./interactions.js";
 import {publicResponse} from "./public-content.js";
-import {authRoute,userFromRequest} from "./auth.js";
+import {authRoute,userFromRequest,renewSession} from "./auth.js";
 import {load} from "./repository.js";
 import {snapshot,command,scheduled,bootstrap,detail,me,reportDetail} from "./service.js";
 import {hash} from "./auth.js";
@@ -38,9 +39,12 @@ export default {
     return finish(Response.json(await bootstrap(env,userId,{thin:false})));
    }
    if(url.pathname==="/api/workspace"&&req.method==="GET"){if(!userId)return finish(Response.json({error:"请先登录。"},{status:401}));return finish(Response.json(await bootstrap(env,userId,{tab:url.searchParams.get("tab")||"",page:Number(url.searchParams.get("page"))||1,query:url.searchParams.get("q")||"",side:url.searchParams.get("side")||"review",reason:url.searchParams.get("reason")||""})))}
-   if(url.pathname==="/api/me"&&req.method==="GET"){return finish(Response.json(await me(env,userId)))}
+   if(url.pathname==="/api/me"&&req.method==="GET"){return finish(Response.json({...await me(env,userId),expiresAt:await renewSession(req,env,userId)}))}
    if(url.pathname==="/api/account-confirm"&&req.method==="POST"){if(!userId)return finish(Response.json({error:"请先登录。"},{status:401}));return finish(Response.json(await accountConfirmation(env,userId,body)))}
    if(url.pathname==="/api/account-close"&&req.method==="POST"){if(!userId)return finish(Response.json({error:"请先登录。"},{status:401}));return finish(Response.json(await closeAccount(env,userId,body)))}
+   if(url.pathname==="/api/feedback"){if(!userId)return finish(Response.json({error:"请先登录后提交或管理反馈。"},{status:401}));if(req.method==="POST")return finish(Response.json(await createFeedback(env,userId,body)));return finish(Response.json(await feedbackInbox(env,userId,{type:url.searchParams.get("type")||"",status:url.searchParams.get("status")||"",page:url.searchParams.get("page")||1})))}
+   const feedbackId=url.pathname.match(/^\/api\/feedback\/(F-[a-f0-9-]{36})$/);
+   if(feedbackId){if(!userId)return finish(Response.json({error:"请先登录。"},{status:401}));return finish(Response.json(req.method==="GET"?await feedbackDetail(env,userId,feedbackId[1]):await updateFeedback(env,userId,feedbackId[1],body)))}
    const memberId=url.pathname.match(/^\/api\/members\/([^/]+)$/);
    if(memberId&&req.method==="GET"){if(!userId)return finish(Response.json({error:"请先登录。"},{status:401}));return finish(Response.json(await memberDetail(env,userId,memberId[1])))}
    const interaction=url.pathname.match(/^\/api\/article-state\/([^/]+)$/);
@@ -56,6 +60,10 @@ export default {
    return finish(Response.json({error:"接口不存在。"},{status:404}));
   }catch(error){
    const internal=/SQLITE|D1_|no such|constraint|database|fetch failed/i.test(error.message);
+   if(url.pathname==="/auth/callback"){
+    const target=new URL(env.FRONTEND_URL);target.hash="/login?error="+encodeURIComponent(internal?"登录连接暂时中断，请重试。":/timeout|aborted/i.test(error.message)?"GitHub 响应超时，请重新登录。":error.message);
+    return finish(new Response(null,{status:302,headers:{Location:target.href}}));
+   }
    return finish(Response.json({error:internal?"服务暂时不可用，请稍后重试。":error.message},{status:error.status|| (internal?503:400)}));
   }
  },

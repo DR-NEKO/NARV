@@ -1,40 +1,53 @@
+import {getToken,saveToken,forgetToken,sessionKey} from "./auth-session.js";
+import {rank} from "./roles.js";
 import {publicArticle} from "./identity.js";
 import {QueryClient} from "./vendor/query-core/index.mjs";
 import * as local from "./store.js";
 import {config} from "./config.js";
 import {metrics} from "./governance.js";
 export const remote=config.mode==="remote";
-const empty=()=>({user:null,users:[],submissions:[],articles:[],comments:[],myComments:[],applications:[],bookmarks:[],notifications:[],announcements:[],identityAudits:[],accountEvents:[],metrics:{},voteTotals:{},reports:[],scores:[],points:0,recordVersions:{},revision:0,unread:0});
-let cache=empty(),manifest=null,publicLoaded=false,searchLoaded=false,meLoaded=false,readyRoute="",pending=false,lastSession=null;
-const deletedDrafts=new Set(),routes=new Map(),details=new Map(),inflight=new Map(),base=config.apiBase?.replace(/\/$/,""),sessionKey="narv-api-session";
+const empty=()=>({user:null,users:[],submissions:[],articles:[],comments:[],myComments:[],applications:[],bookmarks:[],notifications:[],announcements:[],identityAudits:[],accountEvents:[],metrics:{},voteTotals:{},reports:[],scores:[],points:0,recordVersions:{},revision:0,unread:0,feedbackPage:null,feedbackDetail:null});
+let cache=empty(),manifest=null,publicLoaded=false,searchLoaded=false,meLoaded=false,readyRoute="",pending=false,lastSession=null,profileFlight=null,privateEpoch=0,loginBusy=false,loginError="";
+const deletedDrafts=new Set(),routes=new Map(),details=new Map(),inflight=new Map(),base=config.apiBase?.replace(/\/$/,"");
 const queryClient=new QueryClient({defaultOptions:{queries:{staleTime:60000,gcTime:300000,retry:0,networkMode:"always"}}});
 const route=()=>new URL(location.hash.slice(1)||"/","https://narv.local");
 const resourceKey=u=>u.pathname==="/messages"?"/messages?page="+(u.searchParams.get("page")||1):u.pathname==="/workspace/posts"?"/workspace"+u.search:u.pathname+u.search;
 async function workspaceData(u,{force=false}={}){
- const queryKey=["workspace",sessionStorage.getItem(sessionKey)?.slice(-16)||"",resourceKey(u)];
+ const queryKey=["workspace",getToken()?.slice(-16)||"",resourceKey(u)];
  if(force)await queryClient.invalidateQueries({queryKey,exact:true,refetchType:"none"});
- const [name,tabName]=u.pathname.slice(1).split("/"),tab=name==="messages"?"messages":name==="announcements"?"announcements":tabName==="posts"?"":tabName||"";
+ const [name,tabName]=u.pathname.slice(1).split("/");if(name==="workspace"&&tabName==="feedback"&&rank(cache.user)<4)return {feedbackPage:null};if(name==="workspace"&&tabName==="feedback")return queryClient.fetchQuery({queryKey,queryFn:async()=>({feedbackPage:await request("/api/feedback?"+new URLSearchParams({page:u.searchParams.get("page")||1,type:u.searchParams.get("type")||"",status:u.searchParams.get("status")||""}))})});const tab=name==="messages"?"messages":name==="announcements"?"announcements":tabName==="posts"?"":tabName||"";
  return queryClient.fetchQuery({queryKey,queryFn:()=>request("/api/workspace?tab="+encodeURIComponent(tab)+"&page="+(u.searchParams.get("page")||1)+"&q="+encodeURIComponent(u.searchParams.get("q")||"")+"&side="+encodeURIComponent(u.searchParams.get("side")||"review")+"&reason="+encodeURIComponent(u.searchParams.get("reason")||""))});
 }
 
 const hintsKey="narv-own-view-v1";
 function persistHints(){
- if(!cache.user||!meLoaded)return;const token=sessionStorage.getItem(sessionKey);if(!token)return;
+ if(!cache.user||!meLoaded)return;const token=getToken();if(!token)return;
  const core=routes.get("/workspace")?.data,own=core?{...core,users:[cache.user],user:cache.user,submissions:core.submissions.filter(s=>s.authorId===cache.user.id).map(s=>({...s,content:"",images:{},workingDraft:undefined,history:[],versions:s.versions.map(v=>({version:v.version,title:v.title,date:v.date}))})),comments:[],myComments:[],applications:[],reports:[],scores:[],identityAudits:[],accountEvents:[],notifications:[],announcements:[],metrics:{[cache.user.id]:core.metrics[cache.user.id]},recordVersions:Object.fromEntries(Object.entries(core.recordVersions).filter(([k])=>k==="users/"+cache.user.id||k.startsWith("submissions/")&&core.submissions.some(s=>s.id===k.slice(12)&&s.authorId===cache.user.id)))}:null;
  if(own){own.recordVersions["users/"+cache.user.id]=cache.recordVersions["users/"+cache.user.id];own.articles=own.articles.map(a=>({...a,content:"",images:{}}))}
  const text=JSON.stringify({sessionHint:token.slice(-16),time:Date.now(),user:cache.user,points:cache.points,unread:cache.unread,messages:routes.get("/messages?page=1")?.data||null,own});
  if(text.length<700000)try{sessionStorage.setItem(hintsKey,text)}catch{}
 }
-function restoreHints(){try{const token=sessionStorage.getItem(sessionKey),hint=JSON.parse(sessionStorage.getItem(hintsKey)||"null");if(!token||!hint||hint.sessionHint!==token.slice(-16)||Date.now()-hint.time>60000){sessionStorage.removeItem(hintsKey);return}lastSession=token;cache.user=hint.user;cache.users=[hint.user];cache.points=hint.points;cache.unread=hint.unread;if(hint.messages){routes.set("/messages?page=1",{time:hint.time,data:hint.messages});cache.notifications=hint.messages.notifications||[]}if(hint.own){routes.set("/workspace",{time:hint.time,data:hint.own});mergePrivate(hint.own)}}catch{sessionStorage.removeItem(hintsKey)}}
+function restoreHints(){try{const token=getToken(),hint=JSON.parse(sessionStorage.getItem(hintsKey)||"null");if(!token||!hint||hint.sessionHint!==token.slice(-16)||Date.now()-hint.time>60000){sessionStorage.removeItem(hintsKey);return}lastSession=token;cache.user=hint.user;cache.users=[hint.user];cache.points=hint.points;cache.unread=hint.unread;if(hint.messages){routes.set("/messages?page=1",{time:hint.time,data:hint.messages});cache.notifications=hint.messages.notifications||[]}if(hint.own){routes.set("/workspace",{time:hint.time,data:hint.own});mergePrivate(hint.own)}}catch{sessionStorage.removeItem(hintsKey)}}
 export const publicReady=()=>!remote||publicLoaded;
 export const searchReady=()=>!remote||searchLoaded;
-export const authPending=()=>remote&&!!sessionStorage.getItem(sessionKey)&&!cache.user;
+export const loginState=()=>({busy:loginBusy,error:loginError});
+export const authPending=()=>remote&&(loginBusy||!!getToken()&&!cache.user);
 restoreHints();
 
 async function request(path,body,{anonymous=false}={}){
- const token=anonymous?null:sessionStorage.getItem(sessionKey);
- const res=await fetch(base+path,{method:body===undefined?"GET":"POST",headers:{...(token?{Authorization:"Bearer "+token}:{}),...(body===undefined?{}:{"Content-Type":"application/json"})},...(body===undefined?{}:{body:JSON.stringify(body)}),cache:anonymous?"default":"no-store"});
- const data=await res.json();if(!anonymous&&token!==sessionStorage.getItem(sessionKey)){const e=Error("登录状态已变化，请重新打开当前页面。");e.status=499;throw e}if(!res.ok){if(res.status===401){sessionStorage.removeItem(sessionKey);clearPrivate()}const e=Error(data.error||"服务暂时无法连接。");e.status=res.status;throw e}return data;
+ const token=anonymous?null:getToken(),safe=body===undefined||path==="/auth/exchange",attempts=safe?3:1;
+ for(let attempt=0;attempt<attempts;attempt++){
+  try{
+   const res=await fetch(base+path,{method:body===undefined?"GET":"POST",headers:{...(token?{Authorization:"Bearer "+token}:{}),...(body===undefined?{}:{"Content-Type":"application/json"})},...(body===undefined?{}:{body:JSON.stringify(body)}),cache:anonymous?"default":"no-store",signal:AbortSignal.timeout(15000)});
+   if(!anonymous&&token!==getToken()){const e=Error("登录状态已变化，请重新打开当前页面。");e.status=499;throw e}
+   let data;try{data=await res.json()}catch{const e=Error("服务返回异常，请稍后重试。");e.status=res.status||503;throw e}
+   if(!res.ok){if(res.status===401){forgetToken();clearPrivate()}const e=Error(data.error||"服务暂时无法连接。");e.status=res.status;throw e}return data;
+  }catch(error){
+   if(attempt+1>=attempts||error.status&&![502,503,504].includes(error.status))throw error;
+   await new Promise(resolve=>setTimeout(resolve,250*(attempt+1)));
+   if(!anonymous&&token!==getToken())throw Error("登录状态已变化，请重新打开当前页面。");
+  }
+ }
 }
 function mergeArticles(articles){const all=new Map(cache.articles.map(a=>[a.id,a]));for(const a of articles){const old=all.get(a.id);all.set(a.id,{...old,...a,...(!a.content&&old?.content?{content:old.content}:{}),...(!Object.keys(a.images||{}).length&&old?.images?{images:old.images}:{})})}cache.articles=[...all.values()]}
 async function publicLoad(){
@@ -43,11 +56,20 @@ async function publicLoad(){
  catch{let cursor="";do{const data=await request("/api/public/catalog?limit=100"+(cursor?"&cursor="+encodeURIComponent(cursor):""),undefined,{anonymous:true});mergeArticles(data.articles.map(a=>({...a,content:"",images:{}})));for(const a of data.articles)cache.voteTotals[a.id]={...a.votes,mine:0};cursor=data.next||""}while(cursor);cache.announcements=(await request("/api/public/announcements",undefined,{anonymous:true})).announcements}
  publicLoaded=true;document.dispatchEvent(new Event("narv:public-ready"));
 }
+function acceptProfile(data){
+ if(data.expiresAt&&getToken())saveToken(getToken(),data.expiresAt);
+ if(cache.user&&(cache.user.id!==data.user?.id||cache.user.role!==data.user?.role))clearPrivate();
+ cache.user=data.user;cache.users=data.user?[data.user]:[];cache.unread=data.unread||0;cache.points=data.points||0;Object.assign(cache.recordVersions,data.recordVersions);meLoaded=true;persistHints();
+ document.dispatchEvent(new Event("narv:session-ready"));
+ void prefetchWorkspace("#/messages").catch(()=>{});
+}
 async function profile({force=false}={}){
- const token=sessionStorage.getItem(sessionKey);if(token!==lastSession){clearPrivate();lastSession=token}
- if(!sessionStorage.getItem(sessionKey)){if(cache.user)clearPrivate();meLoaded=true;return}
+ const token=getToken();if(token!==lastSession){clearPrivate();lastSession=token}
+ if(!token){if(cache.user)clearPrivate();meLoaded=true;return}
  if(meLoaded&&!force)return;
- const data=await request("/api/me");if(!data.user){sessionStorage.removeItem(sessionKey);clearPrivate();meLoaded=true;return}if(cache.user&&(cache.user.id!==data.user?.id||cache.user.role!==data.user?.role))clearPrivate();cache.user=data.user;cache.users=data.user?[data.user]:[];cache.unread=data.unread||0;cache.points=data.points||0;Object.assign(cache.recordVersions,data.recordVersions);meLoaded=true;persistHints();void prefetchWorkspace("#/messages").catch(()=>{});
+ if(profileFlight?.token===token)return profileFlight.work;
+ const work=(async()=>{const data=await request("/api/me");if(!data.user){forgetToken();clearPrivate();meLoaded=true;return}acceptProfile(data)})();
+ profileFlight={token,work};try{await work}finally{if(profileFlight?.work===work)profileFlight=null}
 }
 function mergePrivate(data){
  const older=(data.revision??-1)<cache.revision;
@@ -59,7 +81,7 @@ function mergePrivate(data){
  if(data.submissions)data={...data,submissions:data.submissions.filter(s=>!deletedDrafts.has(s.id)).map(s=>{const key="submissions/"+s.id;return (data.recordVersions?.[key]||0)<(cache.recordVersions[key]||0)?cache.submissions.find(x=>x.id===s.id)||s:s})};
  if(data.comments)data={...data,comments:data.comments.map(c=>(data.recordVersions?.["comments/"+c.id]||0)<(cache.recordVersions["comments/"+c.id]||0)?cache.comments.find(x=>x.id===c.id)||c:c)};
 
- for(const name of ["submissions","users","myComments","applications","notifications","identityAudits","accountEvents","reports","scores","memberResults"]){if(Object.hasOwn(data,name))cache[name]=data[name]};
+ for(const name of ["submissions","users","myComments","applications","notifications","identityAudits","accountEvents","reports","scores","memberResults","feedbackPage"]){if(Object.hasOwn(data,name))cache[name]=data[name]};
  cache.points=data.points??cache.points;if(data.user&&(!cache.user||(data.recordVersions?.["users/"+data.user.id]||0)>=(cache.recordVersions["users/"+data.user.id]||0)))cache.user=data.user;cache.unread=data.unread??cache.unread;cache.revision=Math.max(data.revision||0,cache.revision);cache.bookmarks=data.bookmarks||cache.bookmarks;
  const comments=new Map(cache.comments.filter(c=>c.status==="published"&&!c.authorId).map(c=>[c.id,c]));for(const c of data.comments||[])comments.set(c.id,c);cache.comments=[...comments.values()];
  const notices=new Map(cache.announcements.map(a=>[a.id,a]));for(const a of data.announcements||[])notices.set(a.id,a);cache.announcements=[...notices.values()];
@@ -83,35 +105,54 @@ export async function ensureSearch(){
  else for(const a of [...cache.articles])await article(a.id);searchLoaded=true;document.dispatchEvent(new Event("narv:public-ready"))})();
  inflight.set("search",work);try{await work}finally{inflight.delete("search")}
 }
-function warm(u){if(u.pathname==="/workspace/profile"||u.pathname==="/submit")return !!cache.user;if(u.pathname.startsWith("/workspace")||u.pathname==="/messages"||u.pathname==="/announcements")return routes.has(resourceKey(u));if(u.pathname.startsWith("/member/"))return !!cache.member&&cache.member.id===u.pathname.split("/")[2];if(u.pathname.startsWith("/submission/")||u.pathname.startsWith("/edit/"))return details.has(u.pathname.split("/")[2]);return false}
+function warm(u){if(u.pathname==="/workspace/profile"||u.pathname==="/submit")return !!cache.user;if(u.pathname.startsWith("/workspace")||u.pathname==="/messages"||u.pathname==="/announcements")return routes.has(resourceKey(u));if(u.pathname.startsWith("/feedback/"))return false;if(u.pathname.startsWith("/member/"))return !!cache.member&&cache.member.id===u.pathname.split("/")[2];if(u.pathname.startsWith("/submission/")||u.pathname.startsWith("/edit/"))return details.has(u.pathname.split("/")[2]);return false}
 export const routeLoading=()=>remote&&inflight.has(resourceKey(route()))&&!warm(route());
 export async function refresh({force=false}={}){
  if(!remote)return;
  const current=route(),key=resourceKey(current);
- if(sessionStorage.getItem(sessionKey)!==lastSession){clearPrivate();lastSession=sessionStorage.getItem(sessionKey)}
- if(readyRoute===key&&!force)return;
- const cachedRoute=routes.get(key);if(cachedRoute&&!force){mergePrivate(cachedRoute.data);if(Date.now()-cachedRoute.time<60000){readyRoute=key;if(!meLoaded)profile().then(()=>document.dispatchEvent(new Event("narv:session-ready"))).catch(()=>{});return}}
+ if(getToken()!==lastSession){clearPrivate();lastSession=getToken()}
+ if(readyRoute===key&&!force&&!current.pathname.startsWith("/workspace/members"))return;
+ const cachedRoute=routes.get(key);if(cachedRoute&&!force){mergePrivate(cachedRoute.data);if(!current.pathname.startsWith("/workspace/members")&&Date.now()-cachedRoute.time<60000){readyRoute=key;if(!meLoaded)profile().then(()=>document.dispatchEvent(new Event("narv:session-ready"))).catch(()=>{});return}}
 
  if(inflight.has(key)){const previous=inflight.get(key);if(!force)return previous;try{await previous}catch{}return refresh({force:true})}
- const work=(async()=>{const [name,id]=current.pathname.slice(1).split("/");await Promise.all([["workspace","messages","member","report","submission","edit","submit"].includes(name)?Promise.resolve():publicLoad(),profile().catch(error=>{if(["workspace","submission","edit","submit","report","messages"].includes(name))throw error})]);
+ const epoch=privateEpoch,work=(async()=>{const [name,id]=current.pathname.slice(1).split("/");await Promise.all([["workspace","messages","member","report","feedback","contact","submission","edit","submit"].includes(name)?Promise.resolve():publicLoad(),profile().catch(error=>{if(["workspace","submission","edit","submit","report","feedback","contact","messages"].includes(name))throw error})]);if(epoch!==privateEpoch)return refresh({force:true});
  if(name==="workspace"||name==="messages"||name==="announcements"){
  if(cache.user&&!(name==="workspace"&&id==="profile")){const cached=routes.get(key);const tab=name==="messages"?"messages":name==="announcements"?"announcements":id==="posts"?"":id||"";let data=cached?.data;
- if(force||!data||Date.now()-cached.time>60000){data=await workspaceData(current,{force});routes.set(key,{time:Date.now(),data})}if(resourceKey(route())===key){mergePrivate(data);persistHints()}}
+ if(force||!data||Date.now()-cached.time>60000||tab==="members"){data=await workspaceData(current,{force:force||tab==="members"});routes.set(key,{time:Date.now(),data})}if(resourceKey(route())===key){mergePrivate(data);persistHints()}}
  }else if(["submission","edit"].includes(name)&&cache.user){let data=details.get(id);if(force||!data||Date.now()-data.time>30000){data={...await request("/api/submissions/"+encodeURIComponent(id)),time:Date.now()};details.set(id,data)}if(deletedDrafts.has(id)||(data.recordVersion||0)<(cache.recordVersions["submissions/"+id]||0))return;cache.submissions=[...cache.submissions.filter(s=>s.id!==id),data.submission];cache.recordVersions["submissions/"+id]=data.recordVersion;Object.assign(cache.metrics,data.metrics)}
+ else if(name==="feedback"&&cache.user&&rank(cache.user)>=4){cache.feedbackDetail=null;try{const item=await request("/api/feedback/"+encodeURIComponent(id));if(route().pathname===current.pathname)cache.feedbackDetail=item}catch(error){if(route().pathname===current.pathname){cache.feedbackDetail={id,error:error.message}}}}
  else if(name==="member"&&cache.user){const data=await request("/api/members/"+encodeURIComponent(id));if(route().pathname!==current.pathname)return;cache.member=data.member;cache.memberArticles=data.articles;cache.metrics[id]={...cache.metrics[id],points:data.points};cache.users=[...cache.users.filter(x=>x.id!==id),data.member];cache.recordVersions["users/"+id]=data.recordVersion}
  else if(name==="report"&&cache.user){const data=await request("/api/reports/"+encodeURIComponent(id));cache.reports=[...cache.reports.filter(r=>r.id!==id),data.report];cache.recordVersions["reports/"+id]=data.recordVersion}
  else if(name==="article")await article(id,{force});else if(name==="search")await ensureSearch();
  if(resourceKey(route())===key)readyRoute=key;})();inflight.set(key,work);pending=true;
- try{await work}finally{inflight.delete(key);pending=inflight.size>0}
+ try{await work}finally{if(inflight.get(key)===work)inflight.delete(key);pending=inflight.size>0}
 }
 export async function initialize(){
  if(!remote)return;if(!base)throw Error("API 地址尚未配置。");
- const url=route();if(url.pathname==="/auth-complete"){const ticket=url.searchParams.get("ticket"),verifier=sessionStorage.getItem("narv-login-verifier");history.replaceState(null,"",location.pathname+location.search+"#/login");try{const data=await request("/auth/exchange",{ticket,verifier});sessionStorage.setItem(sessionKey,data.token);location.hash="#/"+(sessionStorage.getItem("narv-next")||"workspace")}finally{sessionStorage.removeItem("narv-login-verifier")}}
+ const url=route();if(url.pathname==="/auth-complete"){
+  loginBusy=true;loginError="";
+  const ticket=url.searchParams.get("ticket"),attempt=url.searchParams.get("attempt"),verifier=sessionStorage.getItem("narv-login-verifier:"+attempt)||sessionStorage.getItem("narv-login-verifier");
+  try{
+   const data=await request("/auth/exchange",{ticket,verifier});
+   saveToken(data.token,data.expiresAt);clearPrivate();lastSession=data.token;loginBusy=false;
+   sessionStorage.removeItem("narv-login-verifier:"+attempt);sessionStorage.removeItem("narv-login-verifier");
+   history.replaceState(null,"",location.pathname+location.search+"#/"+(sessionStorage.getItem("narv-next")||"workspace"));
+   if(data.profile?.user)acceptProfile(data.profile);
+  }catch(error){loginBusy=false;loginError=error.message;return}
+ }
  await refresh();
 }
-export async function login(){const bytes=crypto.getRandomValues(new Uint8Array(32)),verifier=btoa(String.fromCharCode(...bytes)).replaceAll("+","-").replaceAll("/","_").replaceAll("=","");sessionStorage.setItem("narv-login-verifier",verifier);const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(verifier)),challenge=btoa(String.fromCharCode(...new Uint8Array(digest))).replaceAll("+","-").replaceAll("/","_").replaceAll("=","");location.assign(base+"/auth/github?challenge="+challenge)}
-function clearPrivate(){const pub={articles:cache.articles,comments:cache.comments.filter(c=>c.status==="published"&&!c.authorId),announcements:cache.announcements.filter(a=>a.audience==="public")};cache={...empty(),...pub};queryClient.clear();routes.clear();details.clear();deletedDrafts.clear();readyRoute="";meLoaded=false;sessionStorage.removeItem(hintsKey)}
-export async function logout(){if(!remote){local.saveSession(null);return}const token=sessionStorage.getItem(sessionKey);sessionStorage.removeItem(sessionKey);clearPrivate();if(token)void fetch(base+"/auth/logout",{method:"POST",headers:{Authorization:"Bearer "+token,"Content-Type":"application/json"},body:"{}"}).catch(()=>{});}
+export async function login(){
+ if(loginBusy)return;loginBusy=true;loginError="";
+ try{
+  const bytes=crypto.getRandomValues(new Uint8Array(32)),verifier=btoa(String.fromCharCode(...bytes)).replaceAll("+","-").replaceAll("/","_").replaceAll("=","");
+  const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(verifier)),challenge=btoa(String.fromCharCode(...new Uint8Array(digest))).replaceAll("+","-").replaceAll("/","_").replaceAll("=","");
+  sessionStorage.setItem("narv-login-verifier:"+challenge,verifier);sessionStorage.setItem("narv-login-verifier",verifier);
+  location.assign(base+"/auth/github?challenge="+challenge);
+ }catch(error){loginBusy=false;throw error}
+}
+function clearPrivate(){privateEpoch++;inflight.clear();profileFlight=null;if(!getToken())for(const key of Object.keys(sessionStorage))if(key.startsWith("narv-contact-draft:"))sessionStorage.removeItem(key);const pub={articles:cache.articles,comments:cache.comments.filter(c=>c.status==="published"&&!c.authorId),announcements:cache.announcements.filter(a=>a.audience==="public")};cache={...empty(),...pub};queryClient.clear();routes.clear();details.clear();deletedDrafts.clear();readyRoute="";meLoaded=false;sessionStorage.removeItem(hintsKey);document.dispatchEvent(new Event("narv:private-cleared"))}
+export async function logout(){if(!remote){local.saveSession(null);return}const token=getToken();forgetToken();clearPrivate();if(token)void fetch(base+"/auth/logout",{method:"POST",keepalive:true,headers:{Authorization:"Bearer "+token,"Content-Type":"application/json"},body:"{}"}).catch(()=>{});}
 
 export async function prefetchWorkspace(href){
  if(!remote||!cache.user)return;const u=new URL(href.replace(/^#/,""),"https://narv.local"),key=resourceKey(u);if(u.pathname==="/workspace/profile"||routes.has(key)||inflight.has(key))return;
@@ -148,13 +189,17 @@ async function mutate(name,args){
  setTimeout(()=>{const current=route();if(name==="deleteDraft"&&current.pathname.startsWith("/submission/"))return;refresh({force:true}).then(()=>{if(!["/submit","/edit","/workspace/profile"].some(p=>route().pathname===p||p==="/edit"&&route().pathname.startsWith(p+"/")))document.dispatchEvent(new Event("narv:refresh"))}).catch(()=>{})},0);
  return result}catch(error){readyRoute="";setTimeout(()=>refresh({force:true}).catch(()=>{}),0);throw error}
 }
+export const feedbackInbox=()=>cache.feedbackPage;
+export const feedbackCase=()=>cache.feedbackDetail;
+export async function submitFeedback(data){if(!remote)throw Error("本地演示不接收私密反馈，请使用线上网站。");document.dispatchEvent(new CustomEvent("narv:operation",{detail:{name:"feedback"}}));return request("/api/feedback",data)}
+export async function handleFeedback(id,data){if(!remote)throw Error("本地演示不提供反馈管理。");document.dispatchEvent(new CustomEvent("narv:operation",{detail:{name:"feedback"}}));const item=await request("/api/feedback/"+id,data);cache.feedbackDetail=item;for(const entry of routes.values())if(entry.data?.feedbackPage){entry.time=0;entry.data.feedbackPage.items=entry.data.feedbackPage.items.map(f=>f.id===id?{...f,status:item.status,updatedAt:item.updatedAt,version:item.version}:f)}void queryClient.invalidateQueries({queryKey:["workspace"],refetchType:"none"});return item}
 export const memberInfo=()=>remote?cache.member:null;
 export const memberArticles=()=>remote?cache.memberArticles||[]:[];
 export const resubmit=(u,...args)=>remote?mutate("resubmit",args):local.resubmit(u,...args);
 export const suspendAccount=(u,...args)=>remote?mutate("suspendAccount",args):local.suspendAccount(u,...args);
 export const removeContent=(u,...args)=>remote?mutate("removeContent",args):local.removeContent(u,...args);
 export const transferOE=(u,...args)=>remote?mutate("transferOE",args):local.transferOE(u,...args);
-export async function closeAccount(targetId){if(!remote)throw Error("账号注销仅在线上服务执行。");const first=await request("/api/account-confirm",{targetId,firstConfirmation:true});const uid=prompt(first.notice+"\n\n第二次确认：请输入目标账号社区 UID "+first.uid);if(uid===null)return false;if(uid!==first.uid)throw Error("UID 不匹配，未执行注销。");const result=await request("/api/account-close",{challenge:first.challenge,uid,secondConfirmation:true});if(result.self){const prefix="narv-remote-draft:narv-compose-v2:"+cache.user.id+":";for(const key of Object.keys(localStorage))if(key.startsWith(prefix))localStorage.removeItem(key);sessionStorage.removeItem(sessionKey);clearPrivate();cache.articles=[];cache.comments=[];manifest=null;publicLoaded=false;searchLoaded=false;location.hash="#/"}else{routes.clear();queryClient.clear();location.hash="#/workspace/members"}return true}
+export async function closeAccount(targetId){if(!remote)throw Error("账号注销仅在线上服务执行。");const first=await request("/api/account-confirm",{targetId,firstConfirmation:true});const uid=prompt(first.notice+"\n\n第二次确认：请输入目标账号社区 UID "+first.uid);if(uid===null)return false;if(uid!==first.uid)throw Error("UID 不匹配，未执行注销。");const result=await request("/api/account-close",{challenge:first.challenge,uid,secondConfirmation:true});if(result.self){const prefix="narv-remote-draft:narv-compose-v2:"+cache.user.id+":";for(const key of Object.keys(localStorage))if(key.startsWith(prefix))localStorage.removeItem(key);forgetToken();clearPrivate();cache.articles=[];cache.comments=[];manifest=null;publicLoaded=false;searchLoaded=false;location.hash="#/"}else{routes.clear();queryClient.clear();location.hash="#/workspace/members"}return true}
 export const deleteDraft=(u,id)=>remote?mutate("deleteDraft",[id]):local.deleteDraft(u,id);
 
 export const session=()=>remote?cache.user:local.session();
@@ -202,3 +247,10 @@ export const points=u=>remote?cache.points:local.userMetrics(u?.id).points||0;
 export const report=(u,...args)=>remote?mutate("report",args):local.report(u,...args);
 export const claimAccountability=(u,...args)=>remote?mutate("claimAccountability",args):local.claimAccountability(u,...args);
 export const resolveAccountability=(u,...args)=>remote?mutate("resolveAccountability",args):local.resolveAccountability(u,...args);
+
+if(remote)window.addEventListener("storage",event=>{
+ if(event.key!==sessionKey&&event.key!==null)return;
+ sessionStorage.removeItem(sessionKey);clearPrivate();lastSession=getToken();
+ document.dispatchEvent(new Event("narv:session-ready"));
+ void refresh({force:true}).then(()=>document.dispatchEvent(new Event("narv:refresh"))).catch(()=>{});
+});

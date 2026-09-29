@@ -35,6 +35,7 @@ export async function closeAccount(env,actorId,data){
  await save(env.DB,p,after,{extra:[
  env.DB.prepare("DELETE FROM auth WHERE json_extract(data,'$.userId')=? OR json_extract(data,'$.targetId')=?").bind(target.id,target.id),
  env.DB.prepare("INSERT INTO account_erasure(user_id,created_at) VALUES(?,?)").bind(target.id,after.users[0].closedAt),
+ env.DB.prepare("DELETE FROM feedback WHERE owner_id=? OR target_id=?").bind(target.id,target.id),
  // Withdraw public projections immediately; bounded cleanup runs in cron.
  env.DB.prepare("DELETE FROM public_blob_refs WHERE document_key IN (SELECT key FROM public_documents WHERE key IN (SELECT key FROM entities WHERE owner_id=? AND kind IN ('submissions','comments')) OR article_id IN (SELECT id FROM entities WHERE owner_id=? AND kind='submissions'))").bind(target.id,target.id),
  env.DB.prepare("DELETE FROM public_documents WHERE key IN (SELECT key FROM entities WHERE owner_id=? AND kind IN ('submissions','comments')) OR article_id IN (SELECT id FROM entities WHERE owner_id=? AND kind='submissions')").bind(target.id,target.id)
@@ -62,7 +63,7 @@ export async function processErasure(env,planned){
    env.DB.prepare("UPDATE revision SET value=value+1 WHERE id=1")
   ]);return true;
  }
- const rows=await select(env.DB,"kind!='users' AND instr(head,?)>0",[id],{limit:2});
+ const rows=await select(env.DB,"kind!='users' AND EXISTS(SELECT 1 FROM json_tree(head) WHERE type='text' AND value=?)",[id],{limit:2});
  if(rows.length){
   const before=await loadKeys(env.DB,rows.map(r=>r.key)),after=scrub(structuredClone(before.state),id);
   // Release active assignments. Historic decisions remain anonymous for other authors' version history.
@@ -70,6 +71,8 @@ export async function processErasure(env,planned){
   for(const r of after.reports)if(r.handlerId==="deleted"){r.handlerId=null;if(r.status==="reviewing")r.status="pending"}
   await save(env.DB,before,after,{publicize:(db,e,r)=>publicStatements(db,e,r,{apiBase:env.API_URL||""})});return true;
  }
+ const feedbackRefs=await env.DB.prepare("SELECT id,status,handler_id,history,bytes FROM feedback WHERE handler_id=? OR EXISTS(SELECT 1 FROM json_each(history) WHERE json_extract(value,'$.actor_id')=?) ORDER BY id LIMIT 2").bind(id,id).all();
+ if(feedbackRefs.results.length){for(const f of feedbackRefs.results){const events=JSON.parse(f.history).map(e=>e.actor_id===id?{...e,actor_id:"deleted",actor_name:"已注销编辑"}:e),history=JSON.stringify(events),oldBytes=new TextEncoder().encode(f.history).length,newBytes=new TextEncoder().encode(history).length;await env.DB.prepare("UPDATE feedback SET history=?,handler_id=CASE WHEN handler_id=? THEN '' ELSE handler_id END,status=CASE WHEN handler_id=? AND status='in_progress' THEN 'open' ELSE status END,version=version+1,bytes=MAX(0,bytes+?) WHERE id=?").bind(history,id,id,2*(newBytes-oldBytes),f.id).run()}return true}
  await env.DB.batch([
   env.DB.prepare("DELETE FROM records WHERE key=?").bind("users/"+id),
   env.DB.prepare("DELETE FROM blob_links WHERE entity_key=?").bind("users/"+id),

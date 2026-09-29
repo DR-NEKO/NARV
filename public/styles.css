@@ -16,3 +16,15 @@
 .member-search .form-field{margin:0}.member-search input{min-height:44px}
 .member-search button{min-height:44px}.danger-zone{border-color:#d7b9a0}
 @media(max-width:650px){.member-search{grid-template-columns:1fr}.draft-actions{justify-content:flex-start}}
+
+.contact-layout{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:40px;align-items:start}
+.contact-page{max-width:1120px;margin:auto}.contact-page .panel{min-width:0}
+.feedback-filters{display:grid;grid-template-columns:1fr 1fr auto;align-items:end;gap:16px;margin:24px 0}
+.feedback-filters .form-field{margin:0}.feedback-filters select,.feedback-filters button{min-height:44px}
+.feedback-row{display:block;padding:22px 0;border-bottom:1px solid var(--line)}.feedback-row h3{margin:14px 0 10px}
+.feedback-detail{max-width:860px;margin:auto}.feedback-body{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.85}
+.feedback-url,.feedback-row .metadata,.feedback-detail .uid-tag{overflow-wrap:anywhere}.feedback-detail .panel{min-width:0}
+@media(max-width:800px){.contact-layout{grid-template-columns:1fr;gap:24px}}
+@media(max-width:600px){.feedback-filters{grid-template-columns:1fr}.contact-page .field-group{grid-template-columns:1fr}}
+
+.feedback-detail h1,.feedback-detail .panel p,.feedback-row h3{overflow-wrap:anywhere}
