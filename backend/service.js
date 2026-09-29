@@ -88,6 +88,14 @@ export async function command(env,userId,payload){
  if(payload.name==="transferOE")before.dependencies.push("users/"+payload.args[0]);
  if(payload.name==="updateProfiles")before.dependencies.push(...before.state.users.map(x=>"users/"+x.id));
  const domain=engine(before.state),result=commands[payload.name](domain,u,payload.args),after=domain.state(),extra=[];
+ if(payload.name==="deleteDraft"){
+ const link="#/submission/"+payload.args[0],related="SELECT key FROM entities WHERE kind='notifications' AND json_extract(head,'$.link')=?";
+ extra.push(
+  env.DB.prepare("DELETE FROM blob_links WHERE entity_key IN ("+related+")").bind(link),
+  env.DB.prepare("DELETE FROM records WHERE key IN ("+related+")").bind(link),
+  env.DB.prepare("DELETE FROM entities WHERE kind='notifications' AND json_extract(head,'$.link')=?").bind(link)
+ );
+ }
  if(payload.name==="vote"){
  const article=payload.args[0],old=before.state.votes.find(v=>v.userId===userId&&v.articleId===article)?.value||0,next=after.votes.find(v=>v.userId===userId&&v.articleId===article)?.value||0;
  extra.push(env.DB.prepare("INSERT INTO vote_totals(article_id,up,down) VALUES(?,?,?) ON CONFLICT(article_id) DO UPDATE SET up=up+excluded.up,down=down+excluded.down").bind(article,Number(next===1)-Number(old===1),Number(next===-1)-Number(old===-1)));

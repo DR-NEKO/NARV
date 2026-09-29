@@ -70,4 +70,4 @@ HTTPS_PROXY=http://127.0.0.1:7980 NARV_API_URL=https://narv-api.dr-neko-narv.wor
 
 4173 是本地演示，4174 是 Worker 逻辑＋SQLite 联调。浏览器验收使用独立 4175 和临时数据库／测试会话；不替换生产数据。Windows SQLite 数据放系统 temp，避免 UNC 文件锁。实际 workerd + D1 本地迁移／权限／cron 另有 runtime check。k6 本机负载脚本禁止指向公开云端，避免消耗生产免费额度。
 
-正式构建使用固定版本 esbuild 和 TanStack Query Core；公开 JS／CSS 文件名含内容哈希，减少旧文件混用。vendor Query Core 与 LICENSE 已保存，重建可运行 node scripts/vendor-query.mjs。客户端标签页只缓存本人账号／稿件摘要 60 秒，后台重新验会话，退出清理；缓存从不替代服务器权限判断。稿件从未提交（draft／版本0）时作者可删除，已提交稿件只能遵循撤回／撤稿流程。
+正式构建使用固定版本 esbuild 和 TanStack Query Core；公开 JS／CSS 文件名含内容哈希，减少旧文件混用。vendor Query Core 与 LICENSE 已保存，重建可运行 node scripts/vendor-query.mjs。客户端标签页只缓存本人账号／稿件摘要 60 秒，后台重新验会话，退出清理；缓存从不替代服务器权限判断。作者可删除未提交草稿，或主动撤回且从未收到审稿意见的稿件；后者包含已提交版本。曾经公开、收到意见或有举报处理记录的稿件不能通过此入口删除。

@@ -9,13 +9,13 @@ import {markdown} from "../public/ui.js";
 const draft={title:"可删除的未提交草稿",category:"科研与实践",summary:"完整摘要，记录草稿删除以及权限校验。",content:"背景、材料和具体方法。".repeat(12),consents:{original:true,privacy:true,policy:true,responsibility:true}};
 async function fixture(){const DB=sqlite(),b=await load(DB),s=structuredClone(b.state);s.users=initialUsers.map(withIdentities);await save(DB,b,s);return {DB}}
 const run=(e,u,name,args)=>command(e,u,{name,args});
-test("只允许作者删除从未提交过的草稿，删除同时清除实体和附件引用",async()=>{
+test("只允许作者删除草稿或无意见撤回稿，删除同时清除实体和附件引用",async()=>{
  const e=await fixture();try{const d={...draft,content:draft.content+"\n![配图](narv-image:img-1)",images:{"img-1":"data:image/png;base64,aGVsbG8="}},a=await run(e,"demo-author","create",[d]);
  await assert.rejects(run(e,"demo-temp","deleteDraft",[a.result.id]),/仅作者/);await run(e,"demo-author","deleteDraft",[a.result.id]);
  assert.equal((await e.DB.prepare("SELECT count(*) AS n FROM entities WHERE key=?").bind("submissions/"+a.result.id).first()).n,0);
  assert.equal((await e.DB.prepare("SELECT count(*) AS n FROM records WHERE key=?").bind("submissions/"+a.result.id).first()).n,0);
  assert.equal((await e.DB.prepare("SELECT count(*) AS n FROM blob_links WHERE entity_key=?").bind("submissions/"+a.result.id).first()).n,0);
- const b=await run(e,"demo-author","create",[draft]);await run(e,"demo-author","action",[b.result.id,"submit",draft]);await run(e,"demo-author","action",[b.result.id,"withdraw",{}]);await assert.rejects(run(e,"demo-author","deleteDraft",[b.result.id]),/未提交/);
+ const b=await run(e,"demo-author","create",[draft]);await run(e,"demo-author","action",[b.result.id,"submit",draft]);await assert.rejects(run(e,"demo-author","deleteDraft",[b.result.id]),/仅作者/);await run(e,"demo-author","action",[b.result.id,"withdraw",{}]);await run(e,"demo-author","deleteDraft",[b.result.id]);assert.equal((await e.DB.prepare("SELECT count(*) AS n FROM records WHERE key=?").bind("submissions/"+b.result.id).first()).n,0);
  }finally{e.DB.close()}
 });
 test("工作台按页读取且合并为三次数据库往返，双身份设置无需取其他业务",async()=>{
